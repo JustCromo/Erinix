@@ -49,13 +49,14 @@ def _summary(ctx: Context, ruleset: RuleSet) -> None:
                  "ok" if n == 0 else "bad", True))
 
 
-def _demo_rules_path(explicit: str | None) -> str | None:
+def default_rules_path(explicit: str | None = None) -> str:
+    """Percorso delle regole: quello esplicito, /etc/erinix/rules, o (solo da repository) ./rules."""
     if explicit:
         return explicit
     if os.path.isdir(DEFAULT_RULES_DIR):
         return DEFAULT_RULES_DIR
     checkout = Path(__file__).resolve().parents[3] / "rules"   # solo per sviluppo da repository
-    return str(checkout) if checkout.is_dir() else None
+    return str(checkout) if checkout.is_dir() else DEFAULT_RULES_DIR
 
 
 # ----------------------------------------------------------------- comandi
@@ -110,7 +111,7 @@ def cmd_doctor(ctx: Context, args: list[str]) -> int:
         audit = res("warn", "installato, non attivo")
     else:
         audit = res("warn", "non installato")
-    rules_path = opts.get("--rules", DEFAULT_RULES_DIR)
+    rules_path = default_rules_path(opts.get("--rules"))
     try:
         rs = load_rules(rules_path)
         n = len(rs.chains) + len(rs.indicators)
@@ -139,9 +140,11 @@ def cmd_doctor(ctx: Context, args: list[str]) -> int:
 
 def cmd_rules_validate(ctx: Context, args: list[str]) -> int:
     pos, _, _ = parse_args(args, max_positional=1)
-    ruleset = _load(ctx, pos[0] if pos else DEFAULT_RULES_DIR)
+    path = default_rules_path(pos[0] if pos else None)
+    ruleset = _load(ctx, path)
     if ruleset is None:
         return 2
+    ctx.line(Seg("regole ", "brown"), Seg(path, "dim"))
     _print_problems(ctx, ruleset)
     _summary(ctx, ruleset)
     return 1 if ruleset.problems else 0
@@ -149,9 +152,11 @@ def cmd_rules_validate(ctx: Context, args: list[str]) -> int:
 
 def cmd_rules_list(ctx: Context, args: list[str]) -> int:
     pos, _, _ = parse_args(args, max_positional=1)
-    ruleset = _load(ctx, pos[0] if pos else DEFAULT_RULES_DIR)
+    path = default_rules_path(pos[0] if pos else None)
+    ruleset = _load(ctx, path)
     if ruleset is None:
         return 2
+    ctx.line(Seg("regole ", "brown"), Seg(path, "dim"))
     rows = []
     for c in ruleset.chains:
         top = max((s.severity for s in c.steps), key=lambda s: s.rank)
@@ -174,11 +179,7 @@ def cmd_replay(ctx: Context, args: list[str]) -> int:
     scenario = SCENARIOS.get(name)
     if scenario is None:
         raise UsageError(f"scenario sconosciuto: {safe(name)} (disponibili: {', '.join(SCENARIOS)})")
-    path = _demo_rules_path(opts.get("--rules"))
-    if path is None:
-        ctx.error("nessuna cartella di regole trovata: usa --rules PERCORSO")
-        return 2
-    ruleset = _load(ctx, path)
+    ruleset = _load(ctx, default_rules_path(opts.get("--rules")))
     if ruleset is None:
         return 2
     if ruleset.problems:
@@ -199,7 +200,7 @@ def cmd_replay(ctx: Context, args: list[str]) -> int:
             ctx.line(Seg(f"t+{ev.mono_ns / SEC:>5.1f}s", "brown"), Seg("  "),
                      Seg(f"{ev.type.value:<16}", "accent"), Seg("  "), *describe_event(ctx.theme, ev))
             for alert in correlator.process(ev):
-                ctx.say(alert_panel(ctx.theme, alert))
+                ctx.emit(lambda width, a=alert: alert_panel(ctx.theme, a, width=width))
                 final[alert.alert_id] = alert
     except KeyboardInterrupt:
         ctx.say()

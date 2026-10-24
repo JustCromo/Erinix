@@ -161,3 +161,31 @@ def test_history_refuses_symlink(tmp_path, monkeypatch):
     path.symlink_to(target)
     save_history(FakeReadline(), path)
     assert target.read_text() == "non toccare"
+
+
+def test_default_rules_path_falls_back_to_the_checkout(capsys, monkeypatch):
+    from erinix.commands import builtin
+
+    monkeypatch.setattr(builtin, "DEFAULT_RULES_DIR", "/nonexistent/erinix/rules")
+    code, out, _ = run(capsys, "rules", "list")
+    assert code == 0 and "web-rce-revshell" in out and "regole" in out
+    code, out, _ = run(capsys, "rules", "validate")
+    assert code == 0 and "0 problemi" in out
+    assert run(capsys, "replay", "admin", "--fast")[0] == 0
+
+
+def test_explicit_missing_rules_path_still_fails(capsys, tmp_path):
+    code, _, err = run(capsys, "rules", "list", str(tmp_path / "nope"))
+    assert code == 2 and "nope" in err
+
+
+def test_context_emit_without_emitter_uses_theme_width(capsys):
+    from erinix.commands.registry import Context
+
+    ctx = Context.from_env(False)
+    ctx.emit(lambda width: f"larghezza={width}")
+    assert f"larghezza={ctx.theme.width}" in capsys.readouterr().out
+    seen = []
+    ctx.emitter = seen.append
+    ctx.emit(lambda width: "x")
+    assert len(seen) == 1 and capsys.readouterr().out == ""
