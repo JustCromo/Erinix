@@ -79,7 +79,8 @@ def make_help(registry: Registry):
             rows += [[Seg(c.usage, "accent"), c.summary] for c in members]
         ctx.table(["Comando", "Cosa fa"], rows)
         ctx.line(Seg("In console scrivi i comandi senza 'erinix' davanti. Esci con ", "dim"),
-                 Seg("exit", "accent"), Seg(" o Ctrl-D.", "dim"))
+                 Seg("exit", "accent"), Seg(" o Ctrl-D; ripulisci con ", "dim"), Seg("clear", "accent"),
+                 Seg(" o Ctrl-L.", "dim"))
         ctx.line(Seg("In arrivo: ", "dim"), Seg(COMING_SOON, "dim"))
         return 0
     return cmd_help
@@ -116,7 +117,7 @@ def cmd_doctor(ctx: Context, args: list[str]) -> int:
         rules_cell = res("ok", f"{n} regole") if not rs.problems else res("warn", f"{n} regole, {len(rs.problems)} problemi")
     except RuleError as exc:
         rules_cell = res("warn", "non caricabili")
-        rules_path = f"{rules_path}: {exc}"
+        rules_path = str(exc)       # il messaggio contiene già il percorso
     rows = [
         ["Privilegi", res("ok", "root") if root else res("warn", "utente"),
          f"euid {caps.euid}" + ("" if root else " · senza root Erinix è solo osservatore")],

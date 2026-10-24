@@ -43,6 +43,8 @@ class Seg:
     text: str
     role: str | None = None
     bold: bool = False
+    fg: tuple[int, int, int] | None = None
+    bg: tuple[int, int, int] | None = None
 
 
 Cell = Union[str, Seg, Sequence[Seg]]
@@ -52,8 +54,8 @@ def segs(cell: Cell) -> list[Seg]:
     if isinstance(cell, str):
         return [Seg(safe(cell))]
     if isinstance(cell, Seg):
-        return [Seg(safe(cell.text), cell.role, cell.bold)]
-    return [Seg(safe(s.text), s.role, s.bold) for s in cell]
+        return [Seg(safe(cell.text), cell.role, cell.bold, cell.fg, cell.bg)]
+    return [Seg(safe(s.text), s.role, s.bold, s.fg, s.bg) for s in cell]
 
 
 def seg_width(parts: Sequence[Seg]) -> int:
@@ -82,7 +84,7 @@ def fit(parts: Sequence[Seg], width: int, ell: str) -> list[Seg]:
             piece.append(ch)
             budget -= cw
         if piece:
-            out.append(Seg("".join(piece), s.role, s.bold))
+            out.append(Seg("".join(piece), s.role, s.bold, s.fg, s.bg))
             last = s
         if stop:
             break
@@ -91,7 +93,18 @@ def fit(parts: Sequence[Seg], width: int, ell: str) -> list[Seg]:
 
 
 def paint_segs(theme: Theme, parts: Sequence[Seg]) -> str:
-    return "".join(theme.paint(s.text, s.role, s.bold) for s in parts)
+    return "".join(theme.paint(s.text, s.role, s.bold, fg=s.fg, bg=s.bg) for s in parts)
+
+
+def merge(parts: Sequence[Seg]) -> list[Seg]:
+    """Unisce i frammenti adiacenti con lo stesso stile (meno sequenze da stampare)."""
+    out: list[Seg] = []
+    for s in parts:
+        if out and (out[-1].role, out[-1].bold, out[-1].fg, out[-1].bg) == (s.role, s.bold, s.fg, s.bg):
+            out[-1] = Seg(out[-1].text + s.text, s.role, s.bold, s.fg, s.bg)
+        else:
+            out.append(s)
+    return out
 
 
 def table(theme: Theme, headers: Sequence[str], rows: Sequence[Sequence[Cell]],
@@ -167,11 +180,58 @@ def progress(theme: Theme, done: int, total: int) -> list[Seg]:
     return [Seg(theme.glyph("full") * done, "accent"), Seg(theme.glyph("empty") * (total - done), "border")]
 
 
-def banner(theme: Theme, version: str) -> list[str]:
-    n = max(8, min(theme.width, 52) // 2)
+def banner_segs(theme: Theme, version: str, columns: int = 52) -> list[list[Seg]]:
+    n = max(8, min(theme.width, columns) // 2)
     cycle = ("border", "brown", "accent", "brown")
     top = [Seg("/\\", cycle[i % 4]) for i in range(n)]
     bottom = [Seg("\\/", cycle[(n - 1 - i) % 4]) for i in range(n)]
     title = [Seg("  E R I N I X", "accent", True), Seg("   host-based IDS", "brown")]
     sub = [Seg("  Nemirix suite " + theme.glyph("dot") + " v" + version, "dim")]
-    return [paint_segs(theme, p) for p in (top, title, sub, bottom)]
+    return [top, title, sub, bottom]
+
+
+def banner(theme: Theme, version: str) -> list[str]:
+    return [paint_segs(theme, p) for p in banner_segs(theme, version)]
+
+
+Section = tuple["Sequence[Seg] | None", "Sequence[Sequence[Seg]]"]
+
+
+def box(theme: Theme, title: Sequence[Seg], sections: Sequence[Section], *, width: int,
+        border: str = "brown", caption: Sequence[Seg] = ()) -> list[str]:
+    """Riquadro con titolo, sezioni separate da righe con intestazione e didascalia in basso.
+
+    Ogni sezione è (intestazione | None, righe). Restituisce le righe già colorate,
+    tutte larghe `width` colonne, così si possono affiancare ad altri riquadri.
+    """
+    g = theme.glyph
+    ell = g("ell")
+    inner = max(1, width - 4)
+
+    def b(text: str) -> str:
+        return theme.paint(text, border)
+
+    def head(left: str, right: str, label: Sequence[Seg]) -> str:
+        t = fit(label, max(1, width - 7), ell)
+        fill = max(1, width - (seg_width(t) + 5))
+        return b(g(left) + g("h") + " ") + paint_segs(theme, t) + b(" " + g("h") * fill + g(right))
+
+    def row(line: Sequence[Seg]) -> str:
+        f = fit(line, inner, ell)
+        return b(g("v") + " ") + paint_segs(theme, f) + " " * (inner - seg_width(f)) + b(" " + g("v"))
+
+    out = [head("tl", "tr", title)]
+    for index, (heading, lines) in enumerate(sections):
+        if heading is not None:
+            out.append(head("lt", "rt", heading))
+        if index == 0:
+            out.append(row([]))
+        out.extend(row(line) for line in lines)
+        out.append(row([]))
+    if caption:
+        c = fit(caption, max(1, width - 9), ell)
+        fill = max(1, width - (seg_width(c) + 6))
+        out.append(b(g("bl") + g("h") * fill + " ") + paint_segs(theme, c) + b(" " + g("h") * 2 + g("br")))
+    else:
+        out.append(b(g("bl") + g("h") * (width - 2) + g("br")))
+    return out

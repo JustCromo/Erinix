@@ -12,31 +12,18 @@ from __future__ import annotations
 
 import os
 import shlex
-import stat
 import sys
 from pathlib import Path
 from typing import Callable
 
 from erinix import __version__
 from erinix.commands.registry import Context, Registry
+from erinix.history import HISTORY_MAX, MAX_LINE, history_path, is_trusted
 from erinix.sensors import selector
 from erinix.ui.render import Seg, banner, paint_segs
 
-MAX_LINE = 4096
-HISTORY_MAX = 500
-
-
-def history_path() -> Path:
-    base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
-    return Path(base) / "erinix" / "history"
-
-
 def load_history(readline, path: Path) -> None:
-    try:
-        st = os.stat(path)
-    except OSError:
-        return
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
+    if not is_trusted(path):
         return  # file altrui o accessibile ad altri: non ci si fida
     try:
         readline.read_history_file(str(path))

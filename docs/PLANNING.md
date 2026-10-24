@@ -203,10 +203,12 @@ Il cerchio con Vulpnix: Vulpnix indica dove guardare, Erinix vede e ferma, le mi
 
 Principio: l'agente (servizio con privilegi) non si avvia né si controlla dalla web app. Console e web sono due **client** della stessa API locale: chiudere uno dei due non spegne la protezione, e un client compromesso non ha i poteri dell'agente.
 
-- **`erinix` apre una console interattiva** (prompt `erinix ▸`), come Vulpnix. Gli stessi comandi funzionano da riga di comando (`erinix doctor`), per systemd, script e test. Un unico registro di comandi alimenta entrambe.
+- **`erinix` apre una console a schermo intero** (schermo alternativo, come Vulpnix): riquadro informativo e mascotte in alto, prompt `erinix ▸` subito sotto, barra di stato in basso. Gli stessi comandi funzionano da riga di comando (`erinix doctor`), per systemd, script e test. Un unico registro di comandi alimenta entrambe. `--plain` (o `TERM=dumb`) apre la console classica a righe.
 - **Tabella chiusa di comandi**: ogni comando è una voce con funzione, aiuto e uso. Niente esecuzione in shell, niente comandi costruiti da testo esterno.
-- **Zero dipendenze**: solo libreria standard (`readline` per cronologia e completamento).
-- **Output sanificato**: ogni testo che arriva da file o processi passa da `safe()`, quindi nessuna sequenza di escape può essere iniettata nel terminale; le larghezze si calcolano sul testo semplice.
+- **Zero dipendenze**: solo libreria standard (`termios`, `select`). I mattoni del terminale (tasti, mouse, selezione) partono dall'esperienza di Vulpnix, con alcune correzioni: decodifica UTF-8 incrementale (le lettere accentate non si spezzano), evidenziazione che conserva i colori, copia negli appunti con limite di dimensione.
+- **Output sanificato**: ogni testo che arriva da file o processi passa da `safe()`, e la console lascia passare verso il terminale solo testo e sequenze di colore: nessuna sequenza OSC (appunti, titolo), nessuno spostamento del cursore o cancellazione dello schermo può essere iniettata da un comando o da un processo ostile. Le larghezze si calcolano sul testo semplice.
+- **Incolla protetta** (bracketed paste): il testo incollato finisce nella riga e non esegue mai nulla; gli «a capo» diventano spazi e la lunghezza è limitata.
+- **Mouse**: rotella e PgUp/PgDn per scorrere; trascinare seleziona e copia negli appunti. Il terminale viene sempre ripristinato (schermo, mouse, cursore), anche in caso di errore o di segnale.
 - **Cronologia** in `~/.local/state/erinix/history` con permessi 0600: non si legge se non è dell'utente o se è accessibile ad altri, non si scrive attraverso un symlink. I comandi marcati `sensitive` non finiscono in cronologia.
 - **Colori**: informazioni ed evidenze in toni di riccio (marrone chiaro per le informazioni, marrone scuro per i bordi, arancio freddo per titoli e comandi); tutto il resto nel colore predefinito del terminale; rosso, verde e giallo riservati alle segnalazioni (gravità: `low` verde, `medium` giallo, `high` rosso, `critical` bianco su rosso). Supporto truecolor, 256 e 16 colori, oppure nessuno: si rispetta `NO_COLOR`, si può forzare con `ERINIX_COLOR=always|never` e disattivare per un comando con `--no-color`. Fallback ASCII se il terminale non è UTF-8.
 - **Web locale** (da costruire): `erinix ui` apre la pagina; ascolto solo su `127.0.0.1`; accesso con link monouso rilasciato dal servizio dopo aver verificato chi lo chiede tramite il kernel (root o gruppo `erinix`); controllo dell'header `Host` contro il DNS rebinding; protezione CSRF; approvazioni di blocco solo da sessioni autenticate.
@@ -255,6 +257,7 @@ Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto)
 | 2026-10-24 | Motore: istanze limitate per regola, si sacrificano solo candidati non avanzati, con alert critico | Un flood non deve poter cancellare un attacco già in corso, né passare sotto silenzio |
 | 2026-10-24 | Console interattiva e riga di comando dallo stesso registro; agente separato, CLI e web come client | Chiudere l'interfaccia non deve spegnere la protezione; un client compromesso non ha i poteri dell'agente |
 | 2026-10-24 | Palette a toni di riccio per le informazioni, semaforo per le segnalazioni; `NO_COLOR` rispettato | Leggibilità e identità visiva coerente con la suite |
+| 2026-10-24 | Console a schermo intero con mascotte (riccio), riquadri a sezioni, mouse e copia; console classica come ripiego | Stessa esperienza di Vulpnix, senza dipendenze |
 
 ### Ancora da decidere o riconfermare
 
@@ -262,4 +265,5 @@ Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto)
 - Dati ostili: grezzi nel DB con escape in output (proposta adottata).
 - Strato di caricamento eBPF da Python (libreria esistente o piccolo componente in C).
 - Regolamento della sfida red vs blue (esche, blocchi IP, disponibilità dei servizi).
-- Convenzioni della console di Vulpnix (prompt, banner, comandi, colori) da confrontare con quelle di Erinix, per una famiglia coerente.
+- Lingua dell'interfaccia: Vulpnix è in inglese, Erinix oggi è in italiano. Da decidere se allinearli (una sola passata di traduzione).
+- Colori della console: Vulpnix usa un arancio pieno, Erinix marroni e arancio freddo. Da confermare che la differenza di tinta sia voluta.

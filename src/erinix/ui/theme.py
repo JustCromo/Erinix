@@ -33,10 +33,20 @@ MIN_WIDTH, MAX_WIDTH = 60, 120
 
 _UNICODE = {"tl": "╭", "tr": "╮", "bl": "╰", "br": "╯", "h": "─", "v": "│", "lt": "├",
             "rt": "┤", "tt": "┬", "bt": "┴", "x": "┼", "ok": "✔", "warn": "▲", "bad": "✖",
-            "full": "█", "empty": "░", "ell": "…", "prompt": "▸", "arrow": "→", "dot": "·"}
+            "full": "█", "empty": "░", "ell": "…", "prompt": "▸", "arrow": "→", "dot": "·",
+            "star": "✦"}
 _ASCII = {"tl": "+", "tr": "+", "bl": "+", "br": "+", "h": "-", "v": "|", "lt": "+",
           "rt": "+", "tt": "+", "bt": "+", "x": "+", "ok": "OK", "warn": "!!", "bad": "XX",
-          "full": "#", "empty": "-", "ell": "...", "prompt": ">", "arrow": "->", "dot": "-"}
+          "full": "#", "empty": "-", "ell": "...", "prompt": ">", "arrow": "->", "dot": "-",
+          "star": "*"}
+
+
+def rgb_to_256(rgb: tuple[int, int, int]) -> int:
+    """Colore più vicino nel cubo 6x6x6 della tavolozza a 256 colori."""
+    def level(v: int) -> int:
+        return 0 if v < 48 else 1 if v < 115 else min(5, (v - 35) // 40)
+    r, g, b = rgb
+    return 16 + 36 * level(r) + 6 * level(g) + level(b)
 
 
 def detect_color_level(stream: TextIO | None = None, env: Mapping[str, str] | None = None) -> int:
@@ -87,13 +97,23 @@ class Theme:
     def glyph(self, name: str) -> str:
         return (_UNICODE if self.unicode else _ASCII)[name]
 
-    def _params(self, role: str | None, bold: bool) -> str:
+    def _rgb_param(self, rgb: tuple[int, int, int], background: bool) -> str:
+        if self.color_level >= 3:
+            return f"{48 if background else 38};2;{rgb[0]};{rgb[1]};{rgb[2]}"
+        return f"{48 if background else 38};5;{rgb_to_256(rgb)}"
+
+    def _params(self, role: str | None, bold: bool, fg=None, bg=None) -> str:
         params: list[str] = []
         if role == "crit":
             return _CRIT[self.color_level]
         if bold:
             params.append("1")
-        spec = PALETTE.get(role) if role else None
+        if self.color_level >= 2:
+            if fg is not None:
+                params.append(self._rgb_param(fg, False))
+            if bg is not None:
+                params.append(self._rgb_param(bg, True))
+        spec = PALETTE.get(role) if role and fg is None else None
         if spec is not None:
             rgb, idx, sgr = spec
             if self.color_level >= 3:
@@ -104,11 +124,15 @@ class Theme:
                 params.append(str(sgr))
         return ";".join(params)
 
-    def paint(self, text: str, role: str | None = None, bold: bool = False, *, prompt: bool = False) -> str:
-        """Colora `text`. Con prompt=True protegge le sequenze per readline."""
+    def paint(self, text: str, role: str | None = None, bold: bool = False, *,
+              prompt: bool = False, fg=None, bg=None) -> str:
+        """Colora `text`. Con prompt=True protegge le sequenze per readline.
+
+        fg/bg sono colori RGB liberi (solo 256 colori e truecolor): servono alla mascotte.
+        """
         if self.color_level == 0 or not text:
             return text
-        params = self._params(role, bold)
+        params = self._params(role, bold, fg, bg)
         if not params:
             return text
         start, end = f"\x1b[{params}m", "\x1b[0m"
