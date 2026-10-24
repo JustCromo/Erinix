@@ -67,6 +67,7 @@ Regole di funzionamento:
 - Cambio di modalità a caldo: il nuovo sensore parte **prima** che il vecchio si spenga, i doppioni vengono scartati, così non esiste un istante di cecità.
 - **Anti-declassamento**: un attaccante potrebbe voler forzare il passaggio a un sensore che vede meno. Il cambio lo può chiedere solo root dal canale di controllo locale, e ogni cambio genera un alert.
 - Il motore di correlazione **non sa da dove arrivano gli eventi**: riceve sempre lo stesso formato.
+- La scelta della modalità sta in `sensors/selector.py` (rilevamento di privilegi, kernel, BTF, auditd) e si controlla con `erinix doctor`. Senza root il piano è «osservatore» e `doctor` dice anche cosa si potrebbe fare con i privilegi.
 
 ## 5. Privilegi
 
@@ -198,28 +199,44 @@ Dopo la risposta Erinix valuta l'accaduto: **ricostruzione** (cronologia, punto 
 
 Il cerchio con Vulpnix: Vulpnix indica dove guardare, Erinix vede e ferma, le mitigazioni dell'incidente diventano ciò che Vulpnix controlla alla scansione successiva. Il report di Vulpnix letto da Erinix è **input da validare e verificare nella firma**, non verità assoluta.
 
-## 13. Console web e consegna
+## 13. Interfaccia: console e comandi
+
+Principio: l'agente (servizio con privilegi) non si avvia né si controlla dalla web app. Console e web sono due **client** della stessa API locale: chiudere uno dei due non spegne la protezione, e un client compromesso non ha i poteri dell'agente.
+
+- **`erinix` apre una console interattiva** (prompt `erinix ▸`), come Vulpnix. Gli stessi comandi funzionano da riga di comando (`erinix doctor`), per systemd, script e test. Un unico registro di comandi alimenta entrambe.
+- **Tabella chiusa di comandi**: ogni comando è una voce con funzione, aiuto e uso. Niente esecuzione in shell, niente comandi costruiti da testo esterno.
+- **Zero dipendenze**: solo libreria standard (`readline` per cronologia e completamento).
+- **Output sanificato**: ogni testo che arriva da file o processi passa da `safe()`, quindi nessuna sequenza di escape può essere iniettata nel terminale; le larghezze si calcolano sul testo semplice.
+- **Cronologia** in `~/.local/state/erinix/history` con permessi 0600: non si legge se non è dell'utente o se è accessibile ad altri, non si scrive attraverso un symlink. I comandi marcati `sensitive` non finiscono in cronologia.
+- **Colori**: informazioni ed evidenze in toni di riccio (marrone chiaro per le informazioni, marrone scuro per i bordi, arancio freddo per titoli e comandi); tutto il resto nel colore predefinito del terminale; rosso, verde e giallo riservati alle segnalazioni (gravità: `low` verde, `medium` giallo, `high` rosso, `critical` bianco su rosso). Supporto truecolor, 256 e 16 colori, oppure nessuno: si rispetta `NO_COLOR`, si può forzare con `ERINIX_COLOR=always|never` e disattivare per un comando con `--no-color`. Fallback ASCII se il terminale non è UTF-8.
+- **Web locale** (da costruire): `erinix ui` apre la pagina; ascolto solo su `127.0.0.1`; accesso con link monouso rilasciato dal servizio dopo aver verificato chi lo chiede tramite il kernel (root o gruppo `erinix`); controllo dell'header `Host` contro il DNS rebinding; protezione CSRF; approvazioni di blocco solo da sessioni autenticate.
+
+Comandi attuali: `help`, `version`, `doctor` (capacità della macchina e sensore previsto), `rules validate`, `rules list`, `replay` (attacchi simulati: `revshell`, `bruteforce`, `shadow`, `admin`).
+
+Comandi previsti: `start`, `stop`, `status`, `ui`, `watch`, `alerts`, `incident`, `response` (status, dry-run, enable, panic), `block` (list, release), `sensor` (status, switch).
+
+## 14. Console web e consegna
 
 - Una **console unica di famiglia**, che mostra i moduli installati: solo Vulpnix, solo Erinix o entrambi (vista integrata).
 - **DB separati** per tool. La console non tocca i DB: li interroga tramite il canale locale di ciascun tool, in sola lettura e con il minimo indispensabile.
 - Esportazione dei report in HTML, Markdown e JSON.
 - La web app è anche **il bersaglio del VSPT** (vulnerability scanning e pen test) richiesto dalla consegna: sicurezza fin dal progetto (argon2, query parametrizzate, CSRF, header di sicurezza, limite ai login, escape di tutto l'input dai tool), riferimento OWASP Top 10, poi scansioni, test manuali, report e secondo test di verifica. Il laboratorio richiede HTTPS e autenticazione sull'interfaccia raggiungibile.
 
-## 14. Rischi residui (da dichiarare nel report)
+## 15. Rischi residui (da dichiarare nel report)
 
 - La **console** vede entrambi i tool: è l'unico punto in cui si incontrano. Si riduce (sola lettura, utente proprio, niente accesso ai file), non si elimina.
 - Un attaccante che ottiene **root** può fermare Erinix: l'obiettivo è **accorgersene** (sensore fermato come allarme), non impedirlo.
 - Con eBPF il kernel può perdere eventi se il buffer si riempie: si contano e si dichiarano.
 - Ogni regola ha falsi positivi possibili; le regole `auto` sono poche, motivate e revisionabili.
 
-## 15. Piano di lavoro e date
+## 16. Piano di lavoro e date
 
 - **6 novembre 2026**: sfida red team vs blue team (Raspberry). Erinix "da gara": sensore, poche catene solide, esche, risposta con scadenza e lista intoccabile, alert da terminale, nessuna console. Erinix è costruito per **qualsiasi Linux**, non su misura del Raspberry.
 - **19 novembre 2026**: consegna finale (tool di risk assessment e applicazione web, con VSPT). Console Nemirix, integrazione con Vulpnix, valutazione degli incidenti, report.
 
-Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto), motore di correlazione (fatto), guardia e risposta, bus a corsie, sensore eBPF, fallback auditd, esche, storage, console.
+Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto), motore di correlazione (fatto), console e comandi di base (fatto), guardia e risposta, bus a corsie, sensore eBPF, fallback auditd, esche, storage, console.
 
-## 16. Registro delle decisioni
+## 17. Registro delle decisioni
 
 | Data | Decisione | Perché |
 |---|---|---|
@@ -236,6 +253,8 @@ Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto)
 | 2026-10-24 | Il file/cartella delle regole deve essere fidato (proprietario, permessi, no symlink) | Chi scrive le regole comanda il tool |
 | 2026-10-24 | `count` con finestra scorrevole; attacchi lenti coperti da regole a finestra lunga | Semplice, prevedibile, già usato da fail2ban |
 | 2026-10-24 | Motore: istanze limitate per regola, si sacrificano solo candidati non avanzati, con alert critico | Un flood non deve poter cancellare un attacco già in corso, né passare sotto silenzio |
+| 2026-10-24 | Console interattiva e riga di comando dallo stesso registro; agente separato, CLI e web come client | Chiudere l'interfaccia non deve spegnere la protezione; un client compromesso non ha i poteri dell'agente |
+| 2026-10-24 | Palette a toni di riccio per le informazioni, semaforo per le segnalazioni; `NO_COLOR` rispettato | Leggibilità e identità visiva coerente con la suite |
 
 ### Ancora da decidere o riconfermare
 
@@ -243,3 +262,4 @@ Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto)
 - Dati ostili: grezzi nel DB con escape in output (proposta adottata).
 - Strato di caricamento eBPF da Python (libreria esistente o piccolo componente in C).
 - Regolamento della sfida red vs blue (esche, blocchi IP, disponibilità dei servizi).
+- Convenzioni della console di Vulpnix (prompt, banner, comandi, colori) da confrontare con quelle di Erinix, per una famiglia coerente.

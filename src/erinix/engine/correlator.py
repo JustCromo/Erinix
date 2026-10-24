@@ -53,7 +53,7 @@ class Stats:
 
 class _Instance:
     __slots__ = ("chain", "key", "anchor", "alert_id", "revision", "reached", "hits",
-                 "start_mono", "evidence")
+                 "start_mono", "evidence", "remote")
 
     def __init__(self, chain: Chain, key: object, anchor, start_mono: int) -> None:
         self.chain = chain
@@ -65,6 +65,7 @@ class _Instance:
         self.hits: deque[tuple[int, str]] = deque()
         self.start_mono = start_mono
         self.evidence: list[tuple[str, tuple[str, ...]]] = []
+        self.remote = None   # ultimo indirizzo remoto visto: resta nell'alert anche ai passi successivi
 
 
 class Correlator:
@@ -217,6 +218,9 @@ class Correlator:
         if step.event is not event.type or not matches(step.match, event, self.tree):
             return []
         now = event.mono_ns
+        seen = getattr(event.payload, "remote_addr", None)
+        if seen is not None:
+            inst.remote = seen
         inst.hits.append((now, event.id))
         self._prune(inst, now)
         if inst.reached == 0 and inst.key in self._candidates[chain.id]:
@@ -237,7 +241,7 @@ class Correlator:
         chain = inst.chain
         done = chain.steps[: inst.reached]
         severity = max((s.severity for s in done), key=lambda s: s.rank)
-        remote = getattr(event.payload, "remote_addr", None)
+        remote = inst.remote
         if isinstance(inst.key, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
             remote = inst.key
         return Alert(

@@ -1,0 +1,177 @@
+"""Tabelle, pannelli, barre e banner per la console, senza dipendenze.
+
+Sicurezza: OGNI testo passa da `safe()` prima di essere stampato, perché può
+derivare da file o processi ostili (niente sequenze di escape iniettate nel
+terminale). Le larghezze si calcolano sul testo semplice, mai su quello colorato.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from dataclasses import dataclass
+from typing import Sequence, Union
+
+from erinix.ui.theme import Theme
+
+MIN_COL = 6
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text)
+
+
+def safe(text: object) -> str:
+    """Rende stampabile in sicurezza qualunque testo (caratteri di controllo escapati)."""
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in str(text))
+
+
+def display_width(text: str) -> int:
+    width = 0
+    for ch in text:
+        if unicodedata.combining(ch):
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return width
+
+
+@dataclass(frozen=True, slots=True)
+class Seg:
+    """Un frammento di testo con il suo ruolo di colore."""
+
+    text: str
+    role: str | None = None
+    bold: bool = False
+
+
+Cell = Union[str, Seg, Sequence[Seg]]
+
+
+def segs(cell: Cell) -> list[Seg]:
+    if isinstance(cell, str):
+        return [Seg(safe(cell))]
+    if isinstance(cell, Seg):
+        return [Seg(safe(cell.text), cell.role, cell.bold)]
+    return [Seg(safe(s.text), s.role, s.bold) for s in cell]
+
+
+def seg_width(parts: Sequence[Seg]) -> int:
+    return sum(display_width(s.text) for s in parts)
+
+
+def fit(parts: Sequence[Seg], width: int, ell: str) -> list[Seg]:
+    """Tronca ai `width` caratteri visibili aggiungendo l'ellissi."""
+    if width <= 0:
+        return []
+    if seg_width(parts) <= width:
+        return list(parts)
+    if display_width(ell) >= width:
+        return [Seg(ell[:width])]
+    budget = width - display_width(ell)
+    out: list[Seg] = []
+    last: Seg | None = None
+    for s in parts:
+        piece: list[str] = []
+        stop = False
+        for ch in s.text:
+            cw = display_width(ch)
+            if cw > budget:
+                stop = True
+                break
+            piece.append(ch)
+            budget -= cw
+        if piece:
+            out.append(Seg("".join(piece), s.role, s.bold))
+            last = s
+        if stop:
+            break
+    out.append(Seg(ell, last.role if last else None))
+    return out
+
+
+def paint_segs(theme: Theme, parts: Sequence[Seg]) -> str:
+    return "".join(theme.paint(s.text, s.role, s.bold) for s in parts)
+
+
+def table(theme: Theme, headers: Sequence[str], rows: Sequence[Sequence[Cell]],
+          *, width: int | None = None) -> str:
+    width = width or theme.width
+    n = len(headers)
+    head = [[Seg(safe(h), "accent", True)] for h in headers]
+    body = [[segs(c) for c in row] for row in rows]
+    for row in body:
+        if len(row) != n:
+            raise ValueError("riga con numero di colonne diverso dall'intestazione")
+    widths = [max([seg_width(head[i])] + [seg_width(r[i]) for r in body]) for i in range(n)]
+    excess = sum(widths) + 3 * n + 1 - width
+    while excess > 0:
+        i = max(range(n), key=lambda k: widths[k])
+        if widths[i] <= MIN_COL:
+            break
+        cut = min(excess, widths[i] - MIN_COL)
+        widths[i] -= cut
+        excess -= cut
+
+    g = theme.glyph
+    ell = g("ell")
+
+    def b(text: str) -> str:
+        return theme.paint(text, "border")
+
+    def rule(left: str, mid: str, right: str) -> str:
+        return b(g(left) + g(mid).join(g("h") * (w + 2) for w in widths) + g(right))
+
+    def line(cells: Sequence[Sequence[Seg]]) -> str:
+        parts = []
+        for cell, w in zip(cells, widths):
+            f = fit(cell, w, ell)
+            parts.append(" " + paint_segs(theme, f) + " " * (w - seg_width(f)) + " ")
+        return b(g("v")) + b(g("v")).join(parts) + b(g("v"))
+
+    out = [rule("tl", "tt", "tr"), line(head), rule("lt", "x", "rt")]
+    out += [line(r) for r in body]
+    out.append(rule("bl", "bt", "br"))
+    return "\n".join(out)
+
+
+def panel(theme: Theme, title: Sequence[Seg], lines: Sequence[Sequence[Seg]],
+          *, right: Sequence[Seg] = (), width: int | None = None, border: str = "border") -> str:
+    width = width or theme.width
+    g = theme.glyph
+    ell = g("ell")
+
+    def b(text: str) -> str:
+        return theme.paint(text, border)
+
+    rw = seg_width(right)
+    # Larghezza fissa del bordo superiore: "╭─ " + titolo + " " + riempimento
+    # [+ " " + destra + " "] + "─╮"  ->  6 caratteri + eventuale destra.
+    reserve = 6 + (rw + 2 if right else 0)
+    t = fit(title, max(1, width - reserve - 1), ell)
+    fill = max(1, width - (seg_width(t) + reserve))
+    top = (b(g("tl") + g("h") + " ") + paint_segs(theme, t) + b(" " + g("h") * fill))
+    if right:
+        top += b(" ") + paint_segs(theme, right) + b(" ")
+    top += b(g("h") + g("tr"))
+    inner = width - 4
+    out = [top]
+    for ln in lines:
+        f = fit(ln, inner, ell)
+        out.append(b(g("v") + " ") + paint_segs(theme, f) + " " * (inner - seg_width(f)) + b(" " + g("v")))
+    out.append(b(g("bl") + g("h") * (width - 2) + g("br")))
+    return "\n".join(out)
+
+
+def progress(theme: Theme, done: int, total: int) -> list[Seg]:
+    return [Seg(theme.glyph("full") * done, "accent"), Seg(theme.glyph("empty") * (total - done), "border")]
+
+
+def banner(theme: Theme, version: str) -> list[str]:
+    n = max(8, min(theme.width, 52) // 2)
+    cycle = ("border", "brown", "accent", "brown")
+    top = [Seg("/\\", cycle[i % 4]) for i in range(n)]
+    bottom = [Seg("\\/", cycle[(n - 1 - i) % 4]) for i in range(n)]
+    title = [Seg("  E R I N I X", "accent", True), Seg("   host-based IDS", "brown")]
+    sub = [Seg("  Nemirix suite " + theme.glyph("dot") + " v" + version, "dim")]
+    return [paint_segs(theme, p) for p in (top, title, sub, bottom)]
