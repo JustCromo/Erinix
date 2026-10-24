@@ -1,12 +1,12 @@
-"""Albero dei processi con memoria limitata.
+"""Process tree with bounded memory.
 
-Serve al motore per rispondere a "questo processo discende da quello?",
-che è il legame principale tra i passi di una catena.
+The engine uses it to answer "does this process descend from that one?",
+which is the main link between the steps of a chain.
 
-Affidabilità: la dimensione è limitata. Quando serve spazio si rimuovono
-prima i processi già terminati; se anche così non basta, si rimuovono i
-vivi più vecchi e lo si CONTA (evicted_live), così il sensore può
-dichiarare che l'albero è incompleto invece di tacere.
+Reliability: the size is bounded. When space is needed, already-exited
+processes are removed first; if that is not enough, the oldest live ones are
+removed and COUNTED (evicted_live), so the sensor can declare that the tree is
+incomplete instead of staying silent.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from erinix.core.events import ProcessInfo, ProcessKey
 
 DEFAULT_MAX_ENTRIES = 65536
-MAX_DEPTH = 128  # difesa contro catene anomale o cicli nei dati
+MAX_DEPTH = 128  # guard against anomalous chains or cycles in the data
 
 
 @dataclass(slots=True)
@@ -29,7 +29,7 @@ class _Node:
 class ProcessTree:
     def __init__(self, max_entries: int = DEFAULT_MAX_ENTRIES) -> None:
         if max_entries < 1:
-            raise ValueError("max_entries deve essere >= 1")
+            raise ValueError("max_entries must be >= 1")
         self._max = max_entries
         self._nodes: OrderedDict[ProcessKey, _Node] = OrderedDict()
         self._exited: OrderedDict[ProcessKey, None] = OrderedDict()
@@ -42,11 +42,11 @@ class ProcessTree:
         return key in self._nodes
 
     def on_exec(self, info: ProcessInfo) -> None:
-        """Registra un processo, o aggiorna l'immagine dopo una execve."""
+        """Record a process, or update its image after an execve."""
         node = self._nodes.get(info.key)
         if node is not None:
-            # execve non cambia PID né istante di avvio: stesso processo, nuova immagine.
-            # Il genitore noto resta quello registrato per primo.
+            # execve changes neither the PID nor the start time: same process, new image.
+            # The known parent stays the one recorded first.
             parent = node.info.parent or info.parent
             node.info = ProcessInfo(
                 key=info.key, parent=parent, uid=info.uid, euid=info.euid,
@@ -73,7 +73,7 @@ class ProcessTree:
         return node is not None and node.exited_ns is None
 
     def ancestors(self, key: ProcessKey) -> list[ProcessKey]:
-        """Antenati dal genitore diretto verso l'alto (resistente ai cicli)."""
+        """Ancestors from the direct parent upwards (safe against cycles)."""
         result: list[ProcessKey] = []
         seen = {key}
         node = self._nodes.get(key)
@@ -87,7 +87,7 @@ class ProcessTree:
         return result
 
     def is_descendant(self, key: ProcessKey, ancestor: ProcessKey) -> bool:
-        """True se `key` coincide con `ancestor` o ne discende."""
+        """True if `key` is `ancestor` or descends from it."""
         return key == ancestor or ancestor in self.ancestors(key)
 
     def _evict_if_needed(self) -> None:

@@ -68,12 +68,12 @@ def test_response_defaults_to_report_only(tmp_path):
 
 def test_unknown_match_field_rejected_regex_impossible(tmp_path):
     bad = GOOD_CHAIN.replace('exe = ["/usr/bin/bash"]', 'exe_regex = [".*"]')
-    assert "non ammesso" in only_problem(tmp_path, bad)
+    assert "not allowed" in only_problem(tmp_path, bad)
 
 
 def test_unknown_rule_key_rejected(tmp_path):
     bad = GOOD_CHAIN.replace('link = "process_tree"', 'link = "process_tree"\nrun = "rm -rf /"')
-    assert "campi non ammessi" in only_problem(tmp_path, bad)
+    assert "fields not allowed" in only_problem(tmp_path, bad)
 
 
 def test_auto_requires_justification(tmp_path):
@@ -90,7 +90,7 @@ def test_chain_needs_two_steps(tmp_path):
 
 def test_event_not_usable_in_rules(tmp_path):
     bad = GOOD_CHAIN.replace('event = "net.connect"', 'event = "sensor.started"')
-    assert "non è utilizzabile" in only_problem(tmp_path, bad)
+    assert "cannot be used" in only_problem(tmp_path, bad)
 
 
 def test_link_remote_ip_needs_remote_events(tmp_path):
@@ -105,8 +105,8 @@ def test_window_and_count_bounds_and_bool_is_not_int(tmp_path):
 
 
 def test_paths_must_be_absolute_and_printable(tmp_path):
-    assert "assoluti" in only_problem(tmp_path, GOOD_CHAIN.replace("/usr/bin/bash", "bash"))
-    assert "controllo" in only_problem(tmp_path, GOOD_CHAIN.replace("/usr/bin/bash", "/usr/bin/ba\\nsh"))
+    assert "absolute" in only_problem(tmp_path, GOOD_CHAIN.replace("/usr/bin/bash", "bash"))
+    assert "control characters" in only_problem(tmp_path, GOOD_CHAIN.replace("/usr/bin/bash", "/usr/bin/ba\\nsh"))
 
 
 def test_invalid_operation_and_port(tmp_path):
@@ -120,9 +120,9 @@ severity = "high"
 path = ["/etc/shadow"]
 operation = ["rm -rf"]
 """
-    assert "operazioni" in only_problem(tmp_path, ind)
+    assert "allowed operations" in only_problem(tmp_path, ind)
     port = GOOD_CHAIN.replace("remote_external = true", "remote_port = [70000]")
-    assert "interi" in only_problem(tmp_path, port)
+    assert "integers" in only_problem(tmp_path, port)
 
 
 def test_indicator_ok(tmp_path):
@@ -141,7 +141,7 @@ became_root = true
 
 def test_bad_rule_discarded_others_survive(tmp_path):
     second = GOOD_CHAIN.replace("schema = 1", "").replace('id = "c1"', 'id = "c2"')
-    second = second.replace('exe = ["/usr/bin/bash"]', "bogus = 1")  # c2 non valida
+    second = second.replace('exe = ["/usr/bin/bash"]', "bogus = 1")  # c2 is invalid
     rs = load_rules(write(tmp_path, GOOD_CHAIN + second))
     assert [c.id for c in rs.chains] == ["c1"]
     assert len(rs.problems) == 1 and rs.problems[0].rule_id == "c2"
@@ -149,7 +149,7 @@ def test_bad_rule_discarded_others_survive(tmp_path):
 
 def test_duplicate_id_discarded(tmp_path):
     rs = load_rules(write(tmp_path, GOOD_CHAIN + GOOD_CHAIN.replace("schema = 1", "")))
-    assert len(rs.chains) == 1 and "duplicato" in rs.problems[0].message
+    assert len(rs.chains) == 1 and "duplicate" in rs.problems[0].message
 
 
 def test_schema_required(tmp_path):
@@ -167,13 +167,13 @@ def test_invalid_toml_and_encoding(tmp_path):
 
 def test_oversized_file_rejected(tmp_path):
     f = write(tmp_path, "# " + "a" * (1024 * 1024 + 10))
-    assert "troppo grande" in load_rules(f).problems[0].message
+    assert "too large" in load_rules(f).problems[0].message
 
 
 def test_world_writable_file_rejected(tmp_path):
     f = write(tmp_path, GOOD_CHAIN, mode=0o666)
     rs = load_rules(f)
-    assert not rs.chains and "scrivibile" in rs.problems[0].message
+    assert not rs.chains and "writable" in rs.problems[0].message
 
 
 def test_symlink_rejected(tmp_path):
@@ -209,7 +209,7 @@ def test_directory_loading_ignores_other_files(tmp_path):
 
 def test_cli_validate_ok_and_errors(tmp_path, capsys):
     assert main(["rules", "validate", str(REPO_RULES)]) == 0
-    assert "0 problemi" in capsys.readouterr().out
+    assert "0 problems" in capsys.readouterr().out
     bad = write(tmp_path, GOOD_CHAIN.replace("exe =", "nope ="))
     assert main(["rules", "validate", str(bad)]) == 1
     assert main(["rules", "validate", str(tmp_path / "missing")]) == 2
@@ -218,7 +218,7 @@ def test_cli_validate_ok_and_errors(tmp_path, capsys):
 def test_cli_output_is_sanitized(tmp_path, capsys):
     d = tmp_path / "rules"
     d.mkdir()
-    write(d, "not toml = =", "evil\x1b[31m.toml")  # nome file ostile
+    write(d, "not toml = =", "evil\x1b[31m.toml")  # hostile file name
     assert main(["rules", "validate", str(d)]) == 1
     out = capsys.readouterr().out
     assert "\x1b" not in out and "evil" in out

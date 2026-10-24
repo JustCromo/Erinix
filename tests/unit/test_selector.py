@@ -22,7 +22,7 @@ def test_root_modern_kernel_uses_ebpf():
 
 def test_old_kernel_falls_back_to_auditd():
     plan = choose(caps(kernel="4.19.0", btf=False, installed=True))
-    assert plan.mode is SensorMode.AUDITD and "vecchio" in plan.reason
+    assert plan.mode is SensorMode.AUDITD and "too old" in plan.reason
 
 
 def test_modern_kernel_without_btf_falls_back_and_says_why():

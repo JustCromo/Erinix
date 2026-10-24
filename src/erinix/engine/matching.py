@@ -1,10 +1,10 @@
-"""Confronto tra un evento e le condizioni 'match' di una regola.
+"""Comparison between an event and the 'match' conditions of a rule.
 
-Solo confronti esatti, prefissi e appartenenza a liste: nessuna espressione
-regolare. Un campo sconosciuto non corrisponde MAI (fallisce chiuso).
+Only exact comparisons, prefixes and list membership: no regular
+expressions. An unknown field NEVER matches (it fails closed).
 
-Nota per i sensori: i percorsi devono arrivare già risolti (canonici) e
-l'eseguibile deve essere quello visto dal kernel, non quello dichiarato.
+Note for sensors: paths must arrive already resolved (canonical) and the
+executable must be the one seen by the kernel, not the declared one.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _ancestor_exe(w, p, pl, tree) -> bool:
 _CHECKS: dict[str, _Check] = {
     "exe": lambda w, p, pl, t: p is not None and p.exe.value in w,
     "exe_prefix": lambda w, p, pl, t: p is not None and bool(p.exe.value) and p.exe.value.startswith(w),
-    # exe sconosciuto (sensore che non lo vede) non conta come "inatteso".
+    # unknown exe (a sensor that cannot see it) does not count as "unexpected".
     "exe_not": lambda w, p, pl, t: p is not None and bool(p.exe.value) and p.exe.value not in w,
     "parent_exe": _parent_exe,
     "ancestor_exe": _ancestor_exe,
@@ -56,7 +56,7 @@ _CHECKS: dict[str, _Check] = {
 
 
 def matches(match: Mapping[str, Any], event: Event, tree: ProcessTree) -> bool:
-    """True se TUTTE le condizioni sono soddisfatte."""
+    """True if ALL the conditions are satisfied."""
     for field, wanted in match.items():
         check = _CHECKS.get(field)
         if check is None or not check(wanted, event.process, event.payload, tree):

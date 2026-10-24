@@ -1,15 +1,15 @@
-"""Console a schermo intero di Erinix.
+"""Full-screen console of Erinix.
 
-È un CLIENT, non l'agente: chiuderla non spegne la protezione.
+It is a CLIENT, not the agent: closing it does not switch protection off.
 
-Sicurezza
-- Tabella chiusa di comandi, nessuna esecuzione in shell.
-- Tutto ciò che i comandi stampano passa da `sanitize_line`: nel terminale
-  arrivano solo testo e sequenze di colore (SGR); nessuna altra sequenza di
-  escape (niente OSC, spostamenti del cursore, titoli, appunti).
-- L'incolla protetta non esegue mai nulla: il testo va nella riga, e gli
-  "a capo" diventano spazi.
-- Il terminale viene sempre ripristinato, anche in caso di errore o segnale.
+Security
+- Closed table of commands, no shell execution.
+- Everything the commands print goes through `sanitize_line`: only text and
+  color sequences (SGR) reach the terminal; no other escape sequence (no OSC,
+  cursor movement, titles, clipboard).
+- Protected paste never executes anything: the text goes into the line, and
+  line breaks become spaces.
+- The terminal is always restored, even on errors or signals.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Callable, TextIO
 
-from erinix import __version__  # noqa: F401  (usato dalla schermata)
+from erinix import __version__  # noqa: F401  (used by the welcome screen)
 from erinix import history as history_store
 from erinix.commands.registry import Context, Registry
 from erinix.tui import terminal as term
@@ -46,7 +46,7 @@ def _strip_controls(text: str) -> str:
 
 
 def sanitize_line(line: str) -> str:
-    """Lascia passare solo testo stampabile e sequenze di colore (SGR)."""
+    """Let only printable text and color sequences (SGR) through."""
     out: list[str] = []
     pos = 0
     for m in _SGR.finditer(line):
@@ -58,12 +58,12 @@ def sanitize_line(line: str) -> str:
 
 
 def content_width(cols: int) -> int:
-    """Larghezza con cui si disegnano tabelle e pannelli per un terminale di `cols` colonne."""
+    """Width used to draw tables and panels for a terminal of `cols` columns."""
     return max(30, min(cols, MAX_BLOCK_WIDTH))
 
 
 class LineSink:
-    """Raccoglie ciò che i comandi stampano e lo trasforma in righe dello schermo."""
+    """Collect what the commands print and turn it into screen lines."""
 
     encoding = "utf-8"
 
@@ -111,8 +111,8 @@ class TuiApp:
         self.editor = LineEditor(history)
         self.history_file = history_file
         self.clock = clock
-        # Il documento è fatto di elementi: righe di testo oppure blocchi (tabelle, pannelli)
-        # che si ridisegnano quando il terminale cambia larghezza.
+        # The document is made of items: text lines or blocks (tables, panels)
+        # that are redrawn when the terminal changes width.
         self.items: list = []
         self._rendered: list[str] = []
         self._rendered_width: int | None = None
@@ -133,10 +133,10 @@ class TuiApp:
         self._sink = sink
         self.ctx = Context(theme, theme, sink, sink, self.append_block)  # type: ignore[arg-type]
 
-    # ------------------------------------------------------------- documento
+    # ------------------------------------------------------------- document
     @property
     def lines(self) -> list[str]:
-        """Righe del documento disegnate alla larghezza corrente."""
+        """Document lines drawn at the current width."""
         return self._rendered
 
     def _width_now(self) -> int:
@@ -147,8 +147,8 @@ class TuiApp:
             return [item]
         try:
             text = item(width)
-        except Exception as exc:  # un blocco difettoso non deve far cadere la console
-            return [self.theme.paint(f"errore di visualizzazione ({type(exc).__name__})", "bad")]
+        except Exception as exc:  # a faulty block must not bring the console down
+            return [self.theme.paint(f"display error ({type(exc).__name__})", "bad")]
         return [sanitize_line(line) for line in text.split("\n")]
 
     def _rerender(self, width: int) -> None:
@@ -178,7 +178,7 @@ class TuiApp:
         self._rendered = []
         self.scroll = 0
         self.selection = None
-        self.session = self._session_fn()      # rilegge privilegi e sensore disponibili
+        self.session = self._session_fn()      # re-reads privileges and the available sensor
 
     def _prompt(self) -> tuple[str, int]:
         t = self.theme
@@ -196,13 +196,13 @@ class TuiApp:
         shown = term.clip_ansi_line(safe(ed.text[start:]), avail)
         return prompt + shown, pw + term.visible_width(ed.text[start:ed.cursor])
 
-    # -------------------------------------------------------------- disegno
+    # -------------------------------------------------------------- drawing
     def _status_bar(self, cols: int) -> str:
         t = self.theme
         if self.flash and self.clock() < self._flash_until:
             tail = [Seg(self.flash, "ok", True)]
         else:
-            tail = [Seg("rotella/PgUp: scorri  ·  trascina: copia  ·  Ctrl-L: pulisci  ·  Ctrl-D: esci", "dim")]
+            tail = [Seg("wheel/PgUp: scroll  ·  drag: copy  ·  Ctrl-L: clear  ·  Ctrl-D: exit", "dim")]
         parts = [Seg(f" {t.glyph('star')} ERINIX ", "accent", True), Seg(self.session.status_text, "brown"),
                  Seg("  ·  ", "border"), *tail]
         fitted = fit(parts, cols, t.glyph("ell"))
@@ -215,7 +215,7 @@ class TuiApp:
         view_rows = max(1, rows - 1)
         width = content_width(cols)
         if width != self._rendered_width:
-            self._rerender(width)              # tabelle e pannelli si adattano alla nuova larghezza
+            self._rerender(width)              # tables and panels adapt to the new width
         prompt_text, cursor_col = self._prompt_line(cols)
         key = (cols, self.session, self.theme.color_level)
         if key != self._welcome_key:
@@ -253,7 +253,7 @@ class TuiApp:
         self.out.write(self.render_frame(cols, rows))
         self.out.flush()
 
-    # --------------------------------------------------------------- scorrere
+    # --------------------------------------------------------------- scrolling
     def scroll_by(self, lines: int) -> None:
         self.scroll = max(0, self.scroll + lines)
 
@@ -358,10 +358,10 @@ class TuiApp:
             return
         text = term.extract_selected_text(self._doc, self.selection)
         if text and term.copy_to_clipboard(self.out, text):
-            self.flash = f"copiato negli appunti ({len(text)} caratteri)"
+            self.flash = f"copied to clipboard ({len(text)} characters)"
             self._flash_until = self.clock() + FLASH_SECONDS
 
-    # ------------------------------------------------------------- comandi
+    # ------------------------------------------------------------- commands
     def cancel_line(self) -> None:
         self.append_line(self._prompt()[0] + safe(self.editor.text) + self.theme.paint("^C", "dim"))
         self.editor.kill_line()
@@ -393,7 +393,7 @@ class TuiApp:
         try:
             tokens = shlex.split(raw)
         except ValueError as exc:
-            self.ctx.error(f"sintassi non valida: {exc}")
+            self.ctx.error(f"invalid syntax: {exc}")
             return
         if tokens[0] in ("exit", "quit"):
             self.done = True
@@ -405,15 +405,15 @@ class TuiApp:
         try:
             self.registry.run(self.ctx, tokens)
         except KeyboardInterrupt:
-            self.ctx.error("interrotto")
-        except Exception as exc:  # la console non deve cadere per un errore in un comando
-            self.ctx.error(f"errore interno ({type(exc).__name__}): {exc}")
+            self.ctx.error("interrupted")
+        except Exception as exc:  # the console must not fall over because of an error in a command
+            self.ctx.error(f"internal error ({type(exc).__name__}): {exc}")
         finally:
             self._sink.flush_partial()
         if found and found[0].sensitive:
             self.editor.forget_last(raw)
 
-    # ------------------------------------------------------------------ ciclo
+    # ------------------------------------------------------------------ loop
     def run(self, fd: int | None = None) -> int:
         fd = sys.stdin.fileno() if fd is None else fd
         reader = term.KeyReader(fd)

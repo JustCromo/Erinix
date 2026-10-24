@@ -59,7 +59,7 @@ def test_kill_and_delete_word():
 
 def test_history_navigation_keeps_draft():
     e = LineEditor(["uno", "due"])
-    e.insert("bozza")
+    e.insert("draft")
     e.history_prev()
     assert e.text == "due"
     e.history_prev()
@@ -68,9 +68,9 @@ def test_history_navigation_keeps_draft():
     assert e.text == "uno"
     e.history_next()
     e.history_next()
-    assert e.text == "bozza"
+    assert e.text == "draft"
     e.history_next()
-    assert e.text == "bozza"
+    assert e.text == "draft"
 
 
 def test_submit_records_history_without_duplicates_or_blanks():
@@ -84,5 +84,5 @@ def test_submit_records_history_without_duplicates_or_blanks():
     assert e.history == ["help", "doctor"]
     e.forget_last("doctor")
     assert e.history == ["help"]
-    e.forget_last("altro")
+    e.forget_last("other")
     assert e.history == ["help"]

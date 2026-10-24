@@ -12,7 +12,7 @@ from erinix.tui.welcome import SessionInfo
 from erinix.ui.theme import Theme
 
 REPO_RULES = str(Path(__file__).resolve().parents[2] / "rules")
-SESSION = SessionInfo(1000, "minimale", "eBPF (CO-RE)", True, "sudo /opt/erinix")
+SESSION = SessionInfo(1000, "minimal", "eBPF (CO-RE)", True, "sudo /opt/erinix")
 ROOT_SESSION = SessionInfo(0, "eBPF (CO-RE)", "eBPF (CO-RE)", False, "sudo erinix")
 
 
@@ -25,7 +25,7 @@ class Clock:
 
 
 def make_app(session=SESSION, registry=None, history=None, color=3, clock=None):
-    size = [130, 40]                                  # dimensione "del terminale", modificabile
+    size = [130, 40]                                  # terminal size, adjustable
     app = TuiApp(registry or build_registry(), theme=Theme(color, True, 120), out=io.StringIO(),
                  session=session, session_fn=lambda: session, history=history,
                  clock=clock or Clock(), size_fn=lambda: (size[0], size[1]))
@@ -49,7 +49,7 @@ def frame(app, cols=130, rows=40):
     return app.render_frame(cols, rows)
 
 
-# -------------------------------------------------------------- sanitizzazione
+# -------------------------------------------------------------- sanitization
 def test_sanitize_line_keeps_colors_only():
     assert sanitize_line("\x1b[31mok\x1b[0m") == "\x1b[31mok\x1b[0m"
     evil = sanitize_line("a\x1b]52;c;ZXZpbA==\x07b\x1b[2Jc\x1b[1;1Hd\x00\te")
@@ -60,37 +60,37 @@ def test_sanitize_line_keeps_colors_only():
 def test_hostile_command_output_never_reaches_the_terminal():
     reg = build_registry()
     reg.add(Command("evil", "x", "evil", "Prove",
-                    lambda ctx, args: ctx.say("ciao\x1b]52;c;ZXZpbA==\x07\x1b[2J\x1b[31mrosso\x1b[0m") or 0))
+                    lambda ctx, args: ctx.say("hello\x1b]52;c;ZXZpbA==\x07\x1b[2J\x1b[31mred\x1b[0m") or 0))
     app = make_app(registry=reg)
     type_line(app, "evil")
     out = frame(app)
-    assert "\x1b]" not in out and "\x1b[2J" not in out and "rosso" in t.strip_ansi(out)
+    assert "\x1b]" not in out and "\x1b[2J" not in out and "red" in t.strip_ansi(out)
 
 
-# ------------------------------------------------------------------- disegno
+# ------------------------------------------------------------------- drawing
 def test_frame_shows_welcome_prompt_and_status():
     out = t.strip_ansi(frame(make_app()))
-    for word in ("ERINIX", "AVVIO RAPIDO", "SESSIONE", "ROOTLESS", "erinix ▸", "sensore minimale",
-                 "PUNTE ALTE"):
+    for word in ("ERINIX", "QUICK START", "SESSION", "ROOTLESS", "erinix ▸", "sensor minimal",
+                 "SPINES UP"):
         assert word in out
     assert "sudo /opt/erinix" in out
 
 
 def test_root_session_text():
     out = t.strip_ansi(frame(make_app(session=ROOT_SESSION)))
-    assert "ROOT" in out and "Completi" in out and "Avvia con" not in out
+    assert "ROOT" in out and "Full access" in out and "Start with" not in out
 
 
 def test_narrow_terminal_hides_mascot_but_keeps_info():
     app = make_app()
     out = t.strip_ansi(app.render_frame(80, 30))
-    assert "AVVIO RAPIDO" in out and "PUNTE ALTE" not in out
+    assert "QUICK START" in out and "SPINES UP" not in out
 
 
 def test_no_color_terminal_uses_text_fallback():
     out = frame(make_app(color=0))
     assert "38;2" not in out and "38;5" not in out and "48;" not in out
-    assert "AVVIO RAPIDO" in t.strip_ansi(out)
+    assert "QUICK START" in t.strip_ansi(out)
 
 
 def test_prompt_cursor_is_positioned_and_visible():
@@ -109,7 +109,7 @@ def test_long_input_scrolls_horizontally_and_keeps_cursor_in_view():
     assert col <= 60
 
 
-# ---------------------------------------------------------------- comandi
+# ---------------------------------------------------------------- commands
 def test_command_output_and_echo():
     app = make_app()
     type_line(app, "version")
@@ -120,9 +120,9 @@ def test_command_output_and_echo():
 def test_unknown_command_and_syntax_error():
     app = make_app()
     type_line(app, "doctr")
-    type_line(app, "echo 'aperta")
+    type_line(app, "echo 'unclosed")
     text = doc_text(app)
-    assert "Intendevi 'doctor'" in text and "sintassi non valida" in text
+    assert "Did you mean 'doctor'" in text and "invalid syntax" in text
 
 
 def test_clear_and_exit_and_ctrl_d():
@@ -155,14 +155,14 @@ def test_command_errors_do_not_crash_the_console():
     reg = build_registry()
 
     def boom(ctx, args):
-        raise ValueError("rotto")
+        raise ValueError("broken")
 
     reg.add(Command("boom", "x", "boom", "Prove", boom))
     app = make_app(registry=reg)
     type_line(app, "boom")
     type_line(app, "version")
     text = doc_text(app)
-    assert "errore interno (ValueError)" in text and "erinix 0.1.0" in text
+    assert "internal error (ValueError)" in text and "erinix 0.1.0" in text
 
 
 def test_sensitive_commands_stay_out_of_history():
@@ -178,7 +178,7 @@ def test_replay_streams_into_the_screen():
     app = make_app()
     type_line(app, f"replay admin --fast --rules {REPO_RULES}")
     text = doc_text(app)
-    assert "Amministratore al lavoro" in text and "Nessun alert" in text
+    assert "Administrator at work" in text and "No alerts" in text
 
 
 def test_output_buffer_is_bounded():
@@ -208,7 +208,7 @@ def test_tab_completion():
     assert app.editor.text == "doctor "
     app.editor.kill_line()
     type_line(app, "rules ", enter=False)
-    app.handle_token("\t")                       # list/validate: nessun prefisso comune oltre al vuoto
+    app.handle_token("\t")                       # list/validate: no common prefix beyond the empty one
     assert "list" in doc_text(app) and "validate" in doc_text(app)
     app.editor.kill_line()
     type_line(app, "rules v", enter=False)
@@ -223,13 +223,13 @@ def test_unknown_keys_are_ignored():
     assert app.editor.text == ""
 
 
-# ------------------------------------------------------------------- incolla
+# ------------------------------------------------------------------- paste
 def test_paste_never_executes_and_newlines_become_spaces():
     app = make_app()
     app.handle_token(t.PASTE_START)
     for ch in "version\nrules list\r\n":
         app.handle_token(ch)
-    app.handle_token("\x1b[A")          # sequenze dentro l'incolla: ignorate
+    app.handle_token("\x1b[A")          # sequences inside a paste: ignored
     app.handle_token(t.PASTE_END)
     assert app.editor.text == "version rules list " and app.lines == []
     app.handle_token("\r")
@@ -245,7 +245,7 @@ def test_paste_is_length_limited():
     assert len(app.editor.text) <= 4096
 
 
-# ------------------------------------------------------------------- scorrere
+# ------------------------------------------------------------------- scrolling
 def fill(app, n=80):
     for i in range(n):
         app.append_line(f"riga {i}")
@@ -271,7 +271,7 @@ def test_wheel_and_page_scroll():
     app.handle_token("\x1b[6~")
     assert app.scroll == 0
     mouse(app, 64, 5, 5)
-    app.handle_token("a")                      # scrivere riporta in fondo
+    app.handle_token("a")                      # typing brings it back to the bottom
     assert app.scroll == 0
 
 
@@ -287,25 +287,25 @@ def test_scroll_is_clamped():
 def test_drag_selection_copies_to_clipboard_and_flashes():
     clock = Clock()
     app = make_app(clock=clock)
-    app.append_line("prima riga di prova")
-    app.append_line("seconda riga")
+    app.append_line("first line of sample text")
+    app.append_line("second line")
     out = frame(app)
-    row = app._doc.index("prima riga di prova") - app._top + 1
+    row = app._doc.index("first line of sample text") - app._top + 1
     mouse(app, 0, 1, row)
     mouse(app, 32, 5, row)
-    assert "\x1b[7m" in frame(app)                         # evidenziata mentre si trascina
+    assert "\x1b[7m" in frame(app)                         # highlighted while dragging
     mouse(app, 0, 5, row, up=True)
     written = app.out.getvalue()
     payload = written.split("\x1b]52;c;")[-1].split("\x1b\\")[0]
-    assert base64.b64decode(payload).decode() == "prima"
-    assert "copiato" in t.strip_ansi(frame(app))
+    assert base64.b64decode(payload).decode() == "first"
+    assert "copied" in t.strip_ansi(frame(app))
     clock.now += 10
-    assert "copiato" not in t.strip_ansi(frame(app))
+    assert "copied" not in t.strip_ansi(frame(app))
 
 
 def test_click_without_drag_copies_nothing_and_key_clears_selection():
     app = make_app()
-    app.append_line("testo")
+    app.append_line("text")
     frame(app)
     mouse(app, 0, 2, 3)
     mouse(app, 0, 2, 3, up=True)
@@ -326,7 +326,7 @@ def test_resize_clears_selection():
     assert app.selection is None
 
 
-# ---------------------------------------------------------------- cronologia
+# ---------------------------------------------------------------- history
 def test_history_file_roundtrip(tmp_path, monkeypatch):
     from erinix import history as h
 
@@ -334,10 +334,10 @@ def test_history_file_roundtrip(tmp_path, monkeypatch):
     h.write_lines(path, ["help", "doctor"])
     assert h.read_lines(path) == ["help", "doctor"]
     path.chmod(0o644)
-    assert h.read_lines(path) == []              # accessibile ad altri: ignorato
+    assert h.read_lines(path) == []              # accessible to others: ignored
 
 
-# ----------------------------------------------------------- ridimensionamento
+# ----------------------------------------------------------- resizing
 def panel_widths(app):
     return {t.visible_width(line) for line in app.lines if t.strip_ansi(line).startswith("╭─ ")}
 
@@ -347,21 +347,21 @@ def test_tables_redraw_wider_when_the_terminal_grows_again():
     frame(app, cols=60, rows=40)
     type_line(app, "help")
     narrow = doc_text(app)
-    assert "…" in narrow and "Elenco dei comandi" not in narrow     # tabella stretta: testo troncato
+    assert "…" in narrow and "List the commands" not in narrow     # narrow table: truncated text
     frame(app, cols=130, rows=40)
     wide = doc_text(app)
-    assert "Elenco dei comandi" in wide and "Rigioca un attacco simulato e mostra gli alert" in wide
+    assert "List the commands" in wide and "Replay a simulated attack and show the alerts" in wide
     frame(app, cols=60, rows=40)
-    assert "Elenco dei comandi" not in doc_text(app)                 # e si restringe di nuovo
+    assert "List the commands" not in doc_text(app)                 # and it narrows again
     box = [t.strip_ansi(line) for line in app.lines if t.strip_ansi(line)[:1] in "╭│├╰"]
-    assert box and all(t.visible_width(line) <= 60 for line in box)      # le tabelle si adattano
+    assert box and all(t.visible_width(line) <= 60 for line in box)      # tables adapt
 
 
 def test_alert_panels_follow_the_terminal_width():
     app = make_app()
     frame(app, cols=130, rows=40)
     type_line(app, f"replay revshell --fast --rules {REPO_RULES}")
-    assert panel_widths(app) == {120}                                # massimo di lettura
+    assert panel_widths(app) == {120}                                # reading maximum
     frame(app, cols=90, rows=40)
     assert panel_widths(app) == {90}
     frame(app, cols=110, rows=40)
@@ -372,20 +372,20 @@ def test_plain_text_lines_are_never_lost_when_shrinking():
     app = make_app()
     frame(app, cols=130, rows=40)
     type_line(app, "help")
-    long_line = "In console scrivi i comandi senza 'erinix' davanti."
+    long_line = "In the console, type commands without 'erinix' in front."
     frame(app, cols=60, rows=40)
-    assert "In console scrivi i comandi" in doc_text(app)
-    assert long_line in doc_text(app)                                # la riga intera resta nel documento
+    assert "In the console, type commands" in doc_text(app)
+    assert long_line in doc_text(app)                                # the whole line stays in the document
 
 
 def test_broken_block_does_not_crash_the_console():
     app = make_app()
 
     def broken(width):
-        raise ValueError("rotto")
+        raise ValueError("broken")
 
     app.append_block(broken)
-    assert "errore di visualizzazione (ValueError)" in doc_text(app)
+    assert "display error (ValueError)" in doc_text(app)
     frame(app, cols=100, rows=30)
     type_line(app, "version")
     assert "erinix 0.1.0" in doc_text(app)

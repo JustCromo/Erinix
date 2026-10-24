@@ -1,1 +1,1 @@
-"""Sensori e selezione della modalità."""
+"""Sensors and mode selection."""

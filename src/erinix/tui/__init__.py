@@ -1,1 +1,1 @@
-"""Console a schermo intero di Erinix."""
+"""Full-screen console of Erinix."""

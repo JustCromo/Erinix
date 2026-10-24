@@ -1,8 +1,8 @@
-"""Rilevamento delle capacità della macchina e scelta del sensore.
+"""Detection of the machine's capabilities and choice of the sensor.
 
-eBPF è il sensore principale; auditd il fallback; la modalità minimale è
-l'ultima rete di sicurezza. Qui si decide soltanto IN BASE A CIÒ CHE C'È:
-la verifica definitiva (caricare davvero un programma eBPF) spetta al sensore.
+eBPF is the main sensor; auditd the fallback; the minimal mode is the last
+safety net. Here we decide ONLY BASED ON WHAT IS THERE: the final check (really
+loading an eBPF program) belongs to the sensor.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ class SensorMode(str, Enum):
 
 
 def parse_kernel(release: str) -> tuple[int, int] | None:
-    """'6.12.5-arch1-1' -> (6, 12). None se non interpretabile."""
+    """'6.12.5-arch1-1' -> (6, 12). None if it cannot be parsed."""
     parts: list[int] = []
     num = ""
     for ch in release:
@@ -63,26 +63,26 @@ class Capabilities:
 
 @dataclass(frozen=True, slots=True)
 class Plan:
-    mode: SensorMode          # cosa si può fare ORA
+    mode: SensorMode          # what can be done NOW
     rootless: bool
-    potential: SensorMode     # cosa si potrebbe fare con i privilegi di root
+    potential: SensorMode     # what could be done with root privileges
     reason: str
 
 
 def _best(caps: Capabilities) -> tuple[SensorMode, str]:
     if caps.kernel_ok_for_ebpf and caps.btf:
-        return SensorMode.EBPF, f"kernel {caps.kernel_release} con BTF"
+        return SensorMode.EBPF, f"kernel {caps.kernel_release} with BTF"
     if caps.auditd_installed or caps.auditd_running:
-        why = "kernel troppo vecchio" if not caps.kernel_ok_for_ebpf else "BTF assente"
-        return SensorMode.AUDITD, f"eBPF non disponibile ({why}): fallback su auditd"
-    return SensorMode.MINIMAL, "né eBPF né auditd: solo /proc e log di autenticazione"
+        why = "kernel too old" if not caps.kernel_ok_for_ebpf else "BTF missing"
+        return SensorMode.AUDITD, f"eBPF unavailable ({why}): falling back to auditd"
+    return SensorMode.MINIMAL, "neither eBPF nor auditd: only /proc and authentication logs"
 
 
 def choose(caps: Capabilities) -> Plan:
     potential, reason = _best(caps)
     if caps.euid != 0:
         return Plan(SensorMode.MINIMAL, True, potential,
-                    "senza root: solo osservatore (/proc e log accessibili)")
+                    "without root: observer only (/proc and readable logs)")
     return Plan(potential, False, potential, reason)
 
 

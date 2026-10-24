@@ -1,1 +1,1 @@
-"""Interfaccia a riga di comando: tema, tabelle, pannelli."""
+"""Command-line interface: theme, tables, panels."""

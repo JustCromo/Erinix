@@ -1,4 +1,4 @@
-"""Tracce di eventi riproducibili (nessun processo reale viene toccato)."""
+"""Reproducible event traces (no real process is touched)."""
 
 from __future__ import annotations
 
@@ -83,16 +83,16 @@ class Scenario:
 
 
 SCENARIOS: dict[str, Scenario] = {s.name: s for s in (
-    Scenario("revshell", "Web server compromesso",
-             "Il web server lancia una shell, la shell apre una connessione verso l'esterno, poi diventa root.",
+    Scenario("revshell", "Compromised web server",
+             "The web server spawns a shell, the shell opens an outbound connection, then becomes root.",
              _revshell, True),
     Scenario("bruteforce", "Brute force SSH",
-             "Cinque login falliti dallo stesso indirizzo, poi un accesso riuscito. Un altro IP fa rumore.",
+             "Five failed logins from the same address, then a successful one. Another IP makes noise.",
              _bruteforce, True),
-    Scenario("shadow", "Manomissione di /etc/shadow",
-             "passwd scrive il file (normale); vim lo scrive (inatteso).",
+    Scenario("shadow", "Tampering with /etc/shadow",
+             "passwd writes the file (normal); vim writes it (unexpected).",
              _shadow, True),
-    Scenario("admin", "Amministratore al lavoro",
-             "Sessione SSH, sudo -l, connessione esterna e sudo: attività legittima, nessun alert.",
+    Scenario("admin", "Administrator at work",
+             "SSH session, sudo -l, outbound connection and sudo: legitimate activity, no alerts.",
              _admin, False),
 )}

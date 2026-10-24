@@ -1,4 +1,4 @@
-"""Motore di correlazione di Erinix."""
+"""Correlation engine of Erinix."""
 
 from erinix.engine.alerts import Alert
 from erinix.engine.correlator import Correlator, Stats

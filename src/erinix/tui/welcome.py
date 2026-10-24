@@ -1,4 +1,4 @@
-"""Schermata di benvenuto: riquadro informativo a sinistra, mascotte a destra."""
+"""Welcome screen: information box on the left, mascot on the right."""
 
 from __future__ import annotations
 
@@ -13,38 +13,38 @@ from erinix.tui import mascot
 from erinix.ui.render import Seg, banner_segs, box
 from erinix.ui.theme import Theme
 
-MODE_NAMES = {"ebpf": "eBPF (CO-RE)", "auditd": "auditd", "minimal": "minimale"}
+MODE_NAMES = {"ebpf": "eBPF (CO-RE)", "auditd": "auditd", "minimal": "minimal"}
 RIGHT_WIDTH = mascot.WIDTH + 6
 LEFT_MAX = 74
 MIN_TWO_PANELS = 96
 
 COMMANDS = (
-    ("help", "Elenco dei comandi e delle opzioni"),
-    ("doctor", "Controlla cosa può usare Erinix qui"),
-    ("rules list", "Elenca le regole caricate"),
-    ("replay", "Rigioca un attacco simulato"),
-    ("clear", "Ripulisce lo schermo (Ctrl-L)"),
+    ("help", "Explore available commands and options"),
+    ("doctor", "Check what Erinix can use on this machine"),
+    ("rules list", "List the loaded detection rules"),
+    ("replay", "Replay a simulated attack"),
+    ("clear", "Refresh this welcome screen (Ctrl-L)"),
 )
 INTRO = (
-    "Rilevamento di catene d'attacco su host Linux.",
-    "Alert progressivi. Risposta prudente e dichiarata.",
-    "Quando non vede, lo dice: il silenzio non è mai un via libera.",
+    "Chain-based intrusion detection for Linux hosts.",
+    "Progressive alerts. Careful, declared response.",
+    "When it cannot see, it says so: silence is never an all-clear.",
 )
-ABOUT = ("Erinix correla gli eventi dell'host in catene d'attacco (servizio, shell, connessione, "
-         "root). Distingue gli attacchi dall'attività normale e dichiara sempre cosa non riesce a vedere.")
+ABOUT = ("Erinix correlates host events into attack chains (service, shell, connection, "
+         "root). It tells attacks apart from normal activity and always states what it cannot see.")
 
 
 @dataclass(frozen=True, slots=True)
 class SessionInfo:
     euid: int
-    mode: str            # nome leggibile del sensore in uso ora
-    potential: str       # nome leggibile del sensore con i privilegi di root
+    mode: str            # readable name of the sensor in use now
+    potential: str       # readable name of the sensor with root privileges
     rootless: bool
-    launch: str          # comando per avviare con privilegi
+    launch: str          # command to start with privileges
 
     @property
     def status_text(self) -> str:
-        return f"sensore {self.mode}" + (" (rootless)" if self.rootless else "")
+        return f"sensor {self.mode}" + (" (rootless)" if self.rootless else "")
 
 
 def session_info() -> SessionInfo:
@@ -57,29 +57,29 @@ def session_info() -> SessionInfo:
 def _left(theme: Theme, width: int, info: SessionInfo) -> list[str]:
     star = theme.glyph("star")
     inner = max(20, width - 4)
-    title = [Seg(f"{star} ERINIX {theme.glyph('dot')} RILEVAMENTO INTRUSIONI SU LINUX", "accent", True)]
+    title = [Seg(f"{star} ERINIX {theme.glyph('dot')} LINUX HOST INTRUSION DETECTION", "accent", True)]
 
     def head(label: str) -> list[Seg]:
         return [Seg(f"{star} {label}", "accent", True)]
 
     cw = max(len(c) for c, _ in COMMANDS) + 2
-    lw = len("PRIVILEGI") + 2
+    lw = len("PRIVILEGES") + 2
     mode = ("ROOTLESS" if info.rootless else "ROOT") + f" {theme.glyph('dot')} UID {info.euid}"
-    sensor = info.mode.upper() + ("" if not info.rootless else f" {theme.glyph('dot')} con root: {info.potential}")
+    sensor = info.mode.upper() + ("" if not info.rootless else f" {theme.glyph('dot')} with root: {info.potential}")
     session: list[list[Seg]] = [
-        [Seg("MODALITÀ".ljust(lw), "accent", True), Seg(mode)],
-        [Seg("SENSORE".ljust(lw), "accent", True), Seg(sensor)],
+        [Seg("MODE".ljust(lw), "accent", True), Seg(mode)],
+        [Seg("SENSOR".ljust(lw), "accent", True), Seg(sensor)],
     ]
     if info.rootless:
-        session += [[Seg("PRIVILEGI".ljust(lw), "accent", True), Seg("Senza root Erinix è solo osservatore")],
-                    [Seg(" " * lw), Seg("Avvia con: "), Seg(info.launch, "accent")]]
+        session += [[Seg("PRIVILEGES".ljust(lw), "accent", True), Seg("Detection and response need elevated access")],
+                    [Seg(" " * lw), Seg("Start with: "), Seg(info.launch, "accent")]]
     else:
-        session.append([Seg("PRIVILEGI".ljust(lw), "accent", True), Seg("Completi: sensori e risposta disponibili")])
+        session.append([Seg("PRIVILEGES".ljust(lw), "accent", True), Seg("Full access: sensors and response available")])
     sections = [
         (None, [[Seg(t)] for t in INTRO]),
-        (head("INFO"), [[Seg(t)] for t in textwrap.wrap(ABOUT, inner)]),
-        (head("AVVIO RAPIDO"), [[Seg(c.ljust(cw), "accent", True), Seg(d)] for c, d in COMMANDS]),
-        (head("SESSIONE"), session),
+        (head("ABOUT"), [[Seg(t)] for t in textwrap.wrap(ABOUT, inner)]),
+        (head("QUICK START"), [[Seg(c.ljust(cw), "accent", True), Seg(d)] for c, d in COMMANDS]),
+        (head("SESSION"), session),
     ]
     return box(theme, title, sections, width=width, border="brown")
 
@@ -96,12 +96,12 @@ def _right(theme: Theme, height: int) -> list[str]:
         centered.append([Seg(" " * max(0, (width - used) // 2)), *row])
     lines = [[] for _ in range(top)] + centered + [[] for _ in range(inner_rows - top - len(art))]
     title = [Seg(f"{star} ERINIX {star}", "accent", True)]
-    caption = [Seg(f"PUNTE ALTE {theme.glyph('dot')} OCCHI APERTI", "accent", True)]
+    caption = [Seg(f"SPINES UP {theme.glyph('dot')} EYES OPEN", "accent", True)]
     return box(theme, title, [(None, lines)], width=RIGHT_WIDTH, border="brown", caption=caption)
 
 
 def build(theme: Theme, width: int, info: SessionInfo) -> list[str]:
-    """Righe della schermata (già colorate) per un terminale largo `width`."""
+    """Lines of the screen (already colored) for a terminal `width` columns wide."""
     if width >= MIN_TWO_PANELS:
         left_w = min(LEFT_MAX, width - RIGHT_WIDTH - 3)
         left = _left(theme, left_w, info)

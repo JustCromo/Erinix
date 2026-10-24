@@ -1,4 +1,4 @@
-"""Regole dichiarative di Erinix."""
+"""Declarative rules of Erinix."""
 
 from erinix.rules.loader import (
     Chain, Indicator, Link, Response, RuleError, RuleProblem, RuleSet, Severity, Step,

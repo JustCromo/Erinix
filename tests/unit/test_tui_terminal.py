@@ -53,7 +53,7 @@ def test_reader_timeout_and_lone_escape():
     try:
         assert reader.read(timeout=0.01) is None
         os.write(w, b"\x1b")
-        assert reader.read(timeout=0.5) == "\x1b"        # ESC isolato, dopo una breve attesa
+        assert reader.read(timeout=0.5) == "\x1b"        # lone ESC, after a short wait
         os.write(w, b"\x1b[A")
         assert reader.read(timeout=0.5) == "\x1b[A"
     finally:
@@ -85,8 +85,8 @@ def test_parse_mouse():
     assert t.parse_mouse("\x1b[<99999999;1;1M") is None
 
 
-# ---------------------------------------------------------------- selezione
-LINES = ["prima riga", "\x1b[31mseconda\x1b[0m riga", "漢字 larghe", "ultima"]
+# ---------------------------------------------------------------- selection
+LINES = ["first line", "\x1b[31msecond\x1b[0m line", "漢字 wide", "last"]
 
 
 def test_selection_columns_and_bounds():
@@ -97,8 +97,8 @@ def test_selection_columns_and_bounds():
 
 
 def test_extract_single_and_multi_line():
-    assert t.extract_selected_text(LINES, t.Selection((0, 0), (0, 4))) == "prima"
-    assert t.extract_selected_text(LINES, t.Selection((0, 6), (1, 5))) == "riga\nsecond"
+    assert t.extract_selected_text(LINES, t.Selection((0, 0), (0, 4))) == "first"
+    assert t.extract_selected_text(LINES, t.Selection((0, 6), (1, 5))) == "line\nsecond"
     assert "\x1b" not in t.extract_selected_text(LINES, t.Selection((1, 0), (1, 20)))
 
 
@@ -109,10 +109,10 @@ def test_extract_wide_characters_and_bounds():
 
 
 def test_highlight_keeps_colors_and_survives_resets():
-    out = t.highlight_columns("\x1b[31mrosso\x1b[0m blu", 2, 8)
-    assert t.strip_ansi(out) == "rosso blu"
+    out = t.highlight_columns("\x1b[31mred\x1b[0m blue", 2, 8)
+    assert t.strip_ansi(out) == "red blue"
     assert "\x1b[31m" in out and "\x1b[7m" in out and "\x1b[27m" in out
-    assert out.index("\x1b[0m") < out.rindex("\x1b[7m")     # reverse riattivato dopo il reset
+    assert out.index("\x1b[0m") < out.rindex("\x1b[7m")     # reverse re-enabled after the reset
 
 
 def test_highlight_range_and_wide():
@@ -124,7 +124,7 @@ def test_highlight_range_and_wide():
 def test_clip_ansi_line():
     clipped = t.clip_ansi_line("\x1b[31mabcdefghij\x1b[0m", 4)
     assert t.visible_width(clipped) == 4 and clipped.endswith(t.RESET) and "\x1b[31m" in clipped
-    assert t.clip_ansi_line("ciao", 10) == "ciao"
+    assert t.clip_ansi_line("hello", 10) == "hello"
     assert t.visible_width(t.clip_ansi_line("漢字漢字", 5)) <= 5
 
 

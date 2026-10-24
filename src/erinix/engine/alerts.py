@@ -1,4 +1,4 @@
-"""Alert prodotti dal motore di correlazione."""
+"""Alerts produced by the correlation engine."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 @dataclass(frozen=True, slots=True)
 class Alert:
-    """Un alert per ogni catena in corso: si AGGIORNA, non si duplica.
+    """One alert per chain in progress: it is UPDATED, not duplicated.
 
-    Lo stesso `alert_id` con `revision` crescente descrive la stessa catena
-    man mano che avanza (gravità progressiva).
+    The same `alert_id` with a growing `revision` describes the same chain as it
+    advances (progressive severity).
     """
 
     alert_id: str
@@ -24,16 +24,16 @@ class Alert:
     rule_id: str
     kind: str                      # "chain" | "indicator" | "engine"
     severity: Severity
-    response: Response             # livello di risposta del passo appena raggiunto
+    response: Response             # response level of the step just reached
     steps_done: int
     steps_total: int
     step_id: str
     complete: bool
     mitre: tuple[str, ...]
     description: str
-    evidence: tuple[tuple[str, tuple[str, ...]], ...]   # (id passo, id evento)
-    process: ProcessKey | None     # processo dell'evento che ha fatto scattare l'alert
-    anchor: ProcessKey | None      # radice della catena (legame process_tree)
+    evidence: tuple[tuple[str, tuple[str, ...]], ...]   # (step id, event ids)
+    process: ProcessKey | None     # process of the event that triggered the alert
+    anchor: ProcessKey | None      # root of the chain (process_tree link)
     remote_addr: IPAddress | None
     mono_ns: int
     wall_ns: int

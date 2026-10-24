@@ -1,4 +1,4 @@
-"""Prova di integrazione: la console vera dentro uno pseudo-terminale."""
+"""Integration test: the real console inside a pseudo-terminal."""
 
 import fcntl
 import os
@@ -36,7 +36,7 @@ class Session:
                 if ready:
                     try:
                         data = os.read(self.fd, 65536)
-                    except OSError:          # il figlio è uscito: il pty è chiuso
+                    except OSError:          # the child exited: the pty is closed
                         return
                     if not data:
                         return
@@ -70,11 +70,11 @@ class Session:
 
 def test_console_runs_executes_commands_and_restores_terminal(tmp_path):
     s = Session(tmp_path)
-    assert s.wait_for("AVVIO RAPIDO"), s.buf[-500:]
+    assert s.wait_for("QUICK START"), s.buf[-500:]
     assert t.ALT_ON in s.buf and t.MOUSE_ON in s.buf and t.PASTE_ON in s.buf
     s.send("version\r")
     assert s.wait_for("erinix 0.1.0")
-    s.send("à")                                      # lettera accentata: UTF-8 non si spezza
+    s.send("à")                                      # accented letter: UTF-8 is not split
     assert s.wait_for("à")
     s.send("\x15")
     s.send("\x04")
@@ -87,7 +87,7 @@ def test_console_runs_executes_commands_and_restores_terminal(tmp_path):
 
 def test_paste_with_newline_does_not_run_the_command(tmp_path):
     s = Session(tmp_path)
-    assert s.wait_for("AVVIO RAPIDO")
+    assert s.wait_for("QUICK START")
     s.send("\x1b[200~version\n\x1b[201~")
     s.pump(1.0)
     assert "erinix 0.1.0" not in t.strip_ansi(s.buf)
@@ -100,8 +100,8 @@ def test_paste_with_newline_does_not_run_the_command(tmp_path):
 
 def test_terminate_signal_restores_terminal(tmp_path):
     s = Session(tmp_path)
-    assert s.wait_for("AVVIO RAPIDO")
+    assert s.wait_for("QUICK START")
     os.kill(s.pid, 15)
     code = s.finish()
-    assert code == 128 + 15                       # uscita ordinata, non terminazione brusca
+    assert code == 128 + 15                       # orderly exit, not an abrupt termination
     assert s.buf.endswith(t.RESET + t.PASTE_OFF + t.MOUSE_OFF + t.CURSOR_SHOW + t.ALT_OFF)

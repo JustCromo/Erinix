@@ -1,15 +1,15 @@
-"""Caricamento e validazione delle regole di Erinix (formato TOML).
+"""Loading and validation of Erinix rules (TOML format).
 
-Principi di sicurezza (vedi docs/PLANNING.md):
-- le regole sono SOLO dichiarative: nessun codice, nessun eval, nessuna
-  espressione regolare (niente ReDoS): solo valori esatti, prefissi e liste;
-- schema chiuso: qualunque campo sconosciuto invalida la regola;
-- una regola malformata viene scartata e segnalata, mai eseguita; le altre
-  restano attive;
-- i file devono essere di root (o dell'utente che esegue Erinix), non
-  scrivibili da gruppo/altri e non essere symlink;
-- limiti rigidi su dimensioni, numero di regole, passi e liste;
-- una regola con risposta 'auto' deve spiegare perché la certezza è assoluta.
+Security principles (see docs/PLANNING.md):
+- rules are ONLY declarative: no code, no eval, no regular expressions
+  (no ReDoS): only exact values, prefixes and lists;
+- closed schema: any unknown field invalidates the rule;
+- a malformed rule is discarded and reported, never executed; the others
+  stay active;
+- files must belong to root (or to the user running Erinix), must not be
+  writable by group/others and must not be symlinks;
+- hard limits on sizes, number of rules, steps and lists;
+- a rule with response 'auto' must explain why the certainty is absolute.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ MAX_COUNT = 1000
 
 
 class RuleError(ValueError):
-    """Regola o file di regole non valido."""
+    """Invalid rule or rules file."""
 
 
 class Severity(str, Enum):
@@ -61,17 +61,17 @@ class Response(str, Enum):
 
 
 class Link(str, Enum):
-    """Cosa rende i passi di una catena 'la stessa storia'."""
+    """What makes the steps of a chain 'the same story'."""
 
-    PROCESS_TREE = "process_tree"      # processo del passo 1 o suoi discendenti
-    LOGIN_SESSION = "login_session"    # stessa sessione di login (loginuid)
-    REMOTE_IP = "remote_ip"            # stesso indirizzo remoto
+    PROCESS_TREE = "process_tree"      # the process of step 1 or its descendants
+    LOGIN_SESSION = "login_session"    # same login session (loginuid)
+    REMOTE_IP = "remote_ip"            # same remote address
 
 
 _STR, _INT, _BOOL = "str_list", "int_list", "bool"
 _PROC = {"exe": _STR, "exe_prefix": _STR, "exe_not": _STR}
 
-# Schema chiuso: per ogni tipo di evento, i soli campi ammessi in 'match'.
+# Closed schema: for each event type, the only fields allowed in 'match'.
 MATCH_FIELDS: Mapping[EventType, Mapping[str, str]] = MappingProxyType({
     EventType.PROCESS_EXEC: {**_PROC, "parent_exe": _STR, "ancestor_exe": _STR,
                              "argv_has": _STR, "from_login_session": _BOOL},
@@ -92,7 +92,7 @@ _REMOTE_IP_EVENTS = frozenset({EventType.NET_CONNECT, EventType.NET_ACCEPT,
 _AUTH_EVENTS = frozenset({EventType.AUTH_FAILURE, EventType.AUTH_SUCCESS})
 
 
-# ------------------------------------------------------------------ modello
+# ------------------------------------------------------------------ model
 @dataclass(frozen=True, slots=True)
 class Step:
     id: str
@@ -141,7 +141,7 @@ class RuleSet:
     problems: tuple[RuleProblem, ...]
 
 
-# --------------------------------------------------------------- validatori
+# --------------------------------------------------------------- validators
 def _short(value: object, limit: int = 60) -> str:
     text = repr(value)
     return text if len(text) <= limit else text[: limit - 3] + "..."
@@ -168,18 +168,18 @@ def _is_mitre(value: object) -> bool:
 
 def _text(value: object, where: str, limit: int = MAX_STR) -> str:
     if not isinstance(value, str) or not value:
-        raise RuleError(f"{where}: deve essere una stringa non vuota")
+        raise RuleError(f"{where}: must be a non-empty string")
     if len(value) > limit:
-        raise RuleError(f"{where}: troppo lunga (massimo {limit} caratteri)")
+        raise RuleError(f"{where}: too long (maximum {limit} characters)")
     if not value.isprintable():
-        raise RuleError(f"{where}: contiene caratteri di controllo")
+        raise RuleError(f"{where}: contains control characters")
     return value
 
 
 def _check_keys(table: Mapping[str, Any], allowed: set[str], where: str) -> None:
     unknown = sorted(str(k) for k in table if k not in allowed)
     if unknown:
-        raise RuleError(f"{where}: campi non ammessi: {', '.join(_short(k, 30) for k in unknown)}")
+        raise RuleError(f"{where}: fields not allowed: {', '.join(_short(k, 30) for k in unknown)}")
 
 
 def _enum(cls: type[Enum], value: object, where: str, field: str) -> Any:
@@ -187,50 +187,50 @@ def _enum(cls: type[Enum], value: object, where: str, field: str) -> Any:
         return cls(value)
     except ValueError:
         allowed = ", ".join(m.value for m in cls)
-        raise RuleError(f"{where}: {field} non valido {_short(value, 40)} (ammessi: {allowed})") from None
+        raise RuleError(f"{where}: invalid {field} {_short(value, 40)} (allowed: {allowed})") from None
 
 
 def _str_list(value: object, where: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_LIST_ITEMS:
-        raise RuleError(f"{where}: deve essere una lista di 1-{MAX_LIST_ITEMS} stringhe")
+        raise RuleError(f"{where}: must be a list of 1-{MAX_LIST_ITEMS} strings")
     items = [_text(v, where) for v in value]
     return tuple(dict.fromkeys(items))
 
 
 def _int_list(value: object, where: str, low: int, high: int) -> tuple[int, ...]:
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_LIST_ITEMS:
-        raise RuleError(f"{where}: deve essere una lista di 1-{MAX_LIST_ITEMS} interi")
+        raise RuleError(f"{where}: must be a list of 1-{MAX_LIST_ITEMS} integers")
     for v in value:
         if isinstance(v, bool) or not isinstance(v, int) or not low <= v <= high:
-            raise RuleError(f"{where}: valori ammessi: interi da {low} a {high}")
+            raise RuleError(f"{where}: allowed values: integers from {low} to {high}")
     return tuple(dict.fromkeys(value))
 
 
 def _parse_match(event: EventType, raw: object, where: str) -> Mapping[str, Any]:
     allowed = MATCH_FIELDS.get(event)
     if allowed is None:
-        raise RuleError(f"{where}: l'evento {event.value} non è utilizzabile nelle regole")
+        raise RuleError(f"{where}: event {event.value} cannot be used in rules")
     if not isinstance(raw, dict) or not raw:
-        raise RuleError(f"{where}: 'match' deve essere una tabella non vuota")
+        raise RuleError(f"{where}: 'match' must be a non-empty table")
     result: dict[str, Any] = {}
     for key, value in raw.items():
         kind = allowed.get(key)
         if kind is None:
-            raise RuleError(f"{where}: campo match {_short(key, 30)} non ammesso per "
-                            f"{event.value} (ammessi: {', '.join(sorted(allowed))})")
+            raise RuleError(f"{where}: match field {_short(key, 30)} not allowed for "
+                            f"{event.value} (allowed: {', '.join(sorted(allowed))})")
         w = f"{where}, match.{key}"
         if kind == _BOOL:
             if not isinstance(value, bool):
-                raise RuleError(f"{w}: deve essere true o false")
+                raise RuleError(f"{w}: must be true or false")
             result[key] = value
         elif kind == _INT:
             result[key] = _int_list(value, w, 0, 65535)
         else:
             items = _str_list(value, w)
             if key in _ABSOLUTE_FIELDS and not all(i.startswith("/") for i in items):
-                raise RuleError(f"{w}: servono percorsi assoluti (che iniziano con '/')")
+                raise RuleError(f"{w}: absolute paths required (starting with '/')")
             if key == "operation" and not set(items) <= FILE_OPERATIONS:
-                raise RuleError(f"{w}: operazioni ammesse: {', '.join(sorted(FILE_OPERATIONS))}")
+                raise RuleError(f"{w}: allowed operations: {', '.join(sorted(FILE_OPERATIONS))}")
             result[key] = items
     return MappingProxyType(result)
 
@@ -241,18 +241,18 @@ def _common(raw: Mapping[str, Any], where: str) -> tuple[str, tuple[str, ...]]:
         description = _text(raw["description"], f"{where}, description", MAX_DESCRIPTION)
     mitre_raw = raw.get("mitre", [])
     if not isinstance(mitre_raw, list) or len(mitre_raw) > MAX_LIST_ITEMS:
-        raise RuleError(f"{where}: 'mitre' deve essere una lista di identificativi (es. T1190)")
+        raise RuleError(f"{where}: 'mitre' must be a list of identifiers (e.g. T1190)")
     for m in mitre_raw:
         if not _is_mitre(m):
-            raise RuleError(f"{where}: identificativo MITRE non valido {_short(m, 30)}")
+            raise RuleError(f"{where}: invalid MITRE identifier {_short(m, 30)}")
     return description, tuple(dict.fromkeys(mitre_raw))
 
 
 def _justification(raw: Mapping[str, Any], where: str, needed: bool) -> str:
     if "justification" not in raw:
         if needed:
-            raise RuleError(f"{where}: una regola con risposta 'auto' deve avere 'justification' "
-                            "(perché la certezza è assoluta)")
+            raise RuleError(f"{where}: a rule with response 'auto' must have 'justification' "
+                            "(why the certainty is absolute)")
         return ""
     return _text(raw["justification"], f"{where}, justification", MAX_DESCRIPTION)
 
@@ -260,59 +260,59 @@ def _justification(raw: Mapping[str, Any], where: str, needed: bool) -> str:
 def _ident(raw: Mapping[str, Any], where: str) -> str:
     value = raw.get("id")
     if not _is_ident(value):
-        raise RuleError(f"{where}: 'id' obbligatorio (a-z, 0-9, '-', '_', massimo 64 caratteri)")
+        raise RuleError(f"{where}: 'id' is required (a-z, 0-9, '-', '_', at most 64 characters)")
     return value
 
 
 def _parse_step(raw: object, index: int, where: str, default: Response, link: Link) -> Step:
-    w = f"{where}, passo {index}"
+    w = f"{where}, step {index}"
     if not isinstance(raw, dict):
-        raise RuleError(f"{w}: deve essere una tabella")
+        raise RuleError(f"{w}: must be a table")
     _check_keys(raw, {"id", "event", "severity", "response", "count", "match"}, w)
     step_id = _ident(raw, w)
     event = _enum(EventType, raw.get("event"), w, "event")
     if event not in MATCH_FIELDS:
-        raise RuleError(f"{w}: l'evento {event.value} non è utilizzabile nelle regole")
+        raise RuleError(f"{w}: event {event.value} cannot be used in rules")
     if link is Link.REMOTE_IP and event not in _REMOTE_IP_EVENTS:
-        raise RuleError(f"{w}: con link 'remote_ip' servono eventi con indirizzo remoto")
+        raise RuleError(f"{w}: with link 'remote_ip' events must carry a remote address")
     if link is Link.LOGIN_SESSION and event in _AUTH_EVENTS:
-        raise RuleError(f"{w}: con link 'login_session' servono eventi legati a un processo")
+        raise RuleError(f"{w}: with link 'login_session' events must be tied to a process")
     severity = _enum(Severity, raw.get("severity"), w, "severity")
     response = default if "response" not in raw else _enum(Response, raw["response"], w, "response")
     count = raw.get("count", 1)
     if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= MAX_COUNT:
-        raise RuleError(f"{w}: 'count' deve essere un intero da 1 a {MAX_COUNT}")
+        raise RuleError(f"{w}: 'count' must be an integer from 1 to {MAX_COUNT}")
     match = _parse_match(event, raw.get("match"), w)
     return Step(step_id, event, severity, response, count, match)
 
 
 def _parse_chain(raw: dict) -> Chain:
-    rule_id = _ident(raw, "catena")
-    where = f"catena {rule_id}"
+    rule_id = _ident(raw, "chain")
+    where = f"chain {rule_id}"
     _check_keys(raw, {"id", "description", "mitre", "window_seconds", "link", "response",
                       "justification", "step"}, where)
     description, mitre = _common(raw, where)
     window = raw.get("window_seconds")
     if isinstance(window, bool) or not isinstance(window, int) or not MIN_WINDOW <= window <= MAX_WINDOW:
-        raise RuleError(f"{where}: 'window_seconds' deve essere un intero da {MIN_WINDOW} a {MAX_WINDOW}")
+        raise RuleError(f"{where}: 'window_seconds' must be an integer from {MIN_WINDOW} to {MAX_WINDOW}")
     link = _enum(Link, raw.get("link"), where, "link")
     default = Response.REPORT_ONLY if "response" not in raw else _enum(Response, raw["response"], where, "response")
     steps_raw = raw.get("step")
     if not isinstance(steps_raw, list) or not 2 <= len(steps_raw) <= MAX_STEPS:
-        raise RuleError(f"{where}: servono da 2 a {MAX_STEPS} passi ([[chain.step]]); "
-                        "per un evento singolo usa [[indicator]]")
+        raise RuleError(f"{where}: needs 2 to {MAX_STEPS} steps ([[chain.step]]); "
+                        "for a single event use [[indicator]]")
     steps = tuple(_parse_step(s, i + 1, where, default, link) for i, s in enumerate(steps_raw))
     ids = [s.id for s in steps]
     if len(set(ids)) != len(ids):
-        raise RuleError(f"{where}: gli id dei passi devono essere univoci")
+        raise RuleError(f"{where}: step ids must be unique")
     needs_just = default is Response.AUTO or any(s.response is Response.AUTO for s in steps)
     justification = _justification(raw, where, needs_just)
     return Chain(rule_id, description, mitre, window, link, default, justification, steps)
 
 
 def _parse_indicator(raw: dict) -> Indicator:
-    rule_id = _ident(raw, "indicatore")
-    where = f"indicatore {rule_id}"
+    rule_id = _ident(raw, "indicator")
+    where = f"indicator {rule_id}"
     _check_keys(raw, {"id", "description", "mitre", "event", "severity", "response",
                       "justification", "match"}, where)
     description, mitre = _common(raw, where)
@@ -324,12 +324,12 @@ def _parse_indicator(raw: dict) -> Indicator:
     return Indicator(rule_id, description, mitre, event, severity, response, justification, match)
 
 
-# ------------------------------------------------------- sicurezza dei file
+# ------------------------------------------------------- file security
 def _check_stat(st: os.stat_result, what: str) -> None:
     if st.st_mode & 0o022:
-        raise RuleError(f"{what} scrivibile da gruppo o altri utenti: rifiutato")
+        raise RuleError(f"{what} is writable by group or others: rejected")
     if st.st_uid not in (0, os.geteuid()):
-        raise RuleError(f"{what} con proprietario non fidato (uid {st.st_uid}): rifiutato")
+        raise RuleError(f"{what} has an untrusted owner (uid {st.st_uid}): rejected")
 
 
 def _read_secure(path: str, dir_fd: int | None) -> bytes:
@@ -337,17 +337,17 @@ def _read_secure(path: str, dir_fd: int | None) -> bytes:
     try:
         fd = os.open(path, flags, dir_fd=dir_fd)
     except OSError as exc:
-        raise RuleError(f"impossibile aprire il file ({exc.strerror}); i symlink non sono ammessi") from None
+        raise RuleError(f"cannot open the file ({exc.strerror}); symlinks are not allowed") from None
     with os.fdopen(fd, "rb") as handle:
         st = os.fstat(handle.fileno())
         if not stat.S_ISREG(st.st_mode):
-            raise RuleError("non è un file regolare")
+            raise RuleError("not a regular file")
         _check_stat(st, "file")
         if st.st_size > MAX_FILE_BYTES:
-            raise RuleError(f"file troppo grande (massimo {MAX_FILE_BYTES} byte)")
+            raise RuleError(f"file too large (maximum {MAX_FILE_BYTES} bytes)")
         data = handle.read(MAX_FILE_BYTES + 1)
     if len(data) > MAX_FILE_BYTES:
-        raise RuleError(f"file troppo grande (massimo {MAX_FILE_BYTES} byte)")
+        raise RuleError(f"file too large (maximum {MAX_FILE_BYTES} bytes)")
     return data
 
 
@@ -363,9 +363,9 @@ class _Builder:
 
     def add(self, file: str, rule: Chain | Indicator) -> None:
         if rule.id in self._ids:
-            self.problem(file, rule.id, "id duplicato: regola scartata")
+            self.problem(file, rule.id, "duplicate id: rule discarded")
         elif len(self._ids) >= MAX_RULES:
-            self.problem(file, rule.id, f"superato il limite di {MAX_RULES} regole: regola scartata")
+            self.problem(file, rule.id, f"limit of {MAX_RULES} rules exceeded: rule discarded")
         else:
             self._ids.add(rule.id)
             (self.chains if isinstance(rule, Chain) else self.indicators).append(rule)
@@ -379,11 +379,11 @@ def _parse_document(doc: dict, label: str, builder: _Builder) -> None:
         _check_keys(doc, {"schema", "chain", "indicator"}, "file")
         schema = doc.get("schema")
         if isinstance(schema, bool) or schema != SCHEMA_VERSION:
-            raise RuleError(f"file: serve 'schema = {SCHEMA_VERSION}' in cima al file")
+            raise RuleError(f"file: 'schema = {SCHEMA_VERSION}' is required at the top of the file")
         for key in ("chain", "indicator"):
             value = doc.get(key, [])
             if not isinstance(value, list) or not all(isinstance(r, dict) for r in value):
-                raise RuleError(f"file: '{key}' deve essere una lista di tabelle")
+                raise RuleError(f"file: '{key}' must be a list of tables")
     except RuleError as exc:
         builder.problem(label, None, str(exc))
         return
@@ -393,7 +393,7 @@ def _parse_document(doc: dict, label: str, builder: _Builder) -> None:
             try:
                 builder.add(label, parser(raw))
             except RuleError as exc:
-                builder.problem(label, rule_id, f"{exc}: regola scartata")
+                builder.problem(label, rule_id, f"{exc}: rule discarded")
 
 
 def _load_file(label: str, path: str, dir_fd: int | None, builder: _Builder) -> None:
@@ -403,19 +403,19 @@ def _load_file(label: str, path: str, dir_fd: int | None, builder: _Builder) -> 
     except RuleError as exc:
         builder.problem(label, None, str(exc))
     except UnicodeDecodeError:
-        builder.problem(label, None, "il file non è UTF-8 valido")
+        builder.problem(label, None, "the file is not valid UTF-8")
     except tomllib.TOMLDecodeError as exc:
-        builder.problem(label, None, f"TOML non valido: {exc}")
+        builder.problem(label, None, f"invalid TOML: {exc}")
     else:
         _parse_document(doc, label, builder)
 
 
 def load_rules(path: str | os.PathLike[str]) -> RuleSet:
-    """Carica un file o una cartella di file .toml.
+    """Load a file or a folder of .toml files.
 
-    Solleva RuleError se il percorso stesso è inaffidabile (non esiste, è un
-    symlink, cartella scrivibile da altri): in quel caso non si carica nulla.
-    I problemi sui singoli file o regole finiscono invece in RuleSet.problems.
+    Raises RuleError if the path itself is untrustworthy (missing, a symlink, a
+    folder writable by others): in that case nothing is loaded. Problems with
+    individual files or rules end up in RuleSet.problems instead.
     """
     path = os.fspath(path)
     try:
@@ -423,12 +423,12 @@ def load_rules(path: str | os.PathLike[str]) -> RuleSet:
     except OSError as exc:
         raise RuleError(f"{_short(path, 200)}: {exc.strerror}") from None
     if stat.S_ISLNK(st.st_mode):
-        raise RuleError(f"{_short(path, 200)}: i symlink non sono ammessi")
+        raise RuleError(f"{_short(path, 200)}: symlinks are not allowed")
     builder = _Builder()
     if stat.S_ISDIR(st.st_mode):
         dir_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
-            _check_stat(os.fstat(dir_fd), "cartella delle regole")
+            _check_stat(os.fstat(dir_fd), "rules folder")
             names = sorted(n for n in os.listdir(dir_fd) if n.endswith(".toml") and not n.startswith("."))
             for name in names:
                 _load_file(name, name, dir_fd, builder)

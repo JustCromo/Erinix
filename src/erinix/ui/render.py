@@ -1,8 +1,8 @@
-"""Tabelle, pannelli, barre e banner per la console, senza dipendenze.
+"""Tables, panels, bars and banner for the console, with no dependencies.
 
-Sicurezza: OGNI testo passa da `safe()` prima di essere stampato, perché può
-derivare da file o processi ostili (niente sequenze di escape iniettate nel
-terminale). Le larghezze si calcolano sul testo semplice, mai su quello colorato.
+Security: EVERY text goes through `safe()` before being printed, because it can
+come from hostile files or processes (no escape sequences injected into the
+terminal). Widths are computed on the plain text, never on the colored one.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ def strip_ansi(text: str) -> str:
 
 
 def safe(text: object) -> str:
-    """Rende stampabile in sicurezza qualunque testo (caratteri di controllo escapati)."""
+    """Make any text safely printable (control characters are escaped)."""
     return "".join(c if c.isprintable() else repr(c)[1:-1] for c in str(text))
 
 
@@ -38,7 +38,7 @@ def display_width(text: str) -> int:
 
 @dataclass(frozen=True, slots=True)
 class Seg:
-    """Un frammento di testo con il suo ruolo di colore."""
+    """A fragment of text with its color role."""
 
     text: str
     role: str | None = None
@@ -63,7 +63,7 @@ def seg_width(parts: Sequence[Seg]) -> int:
 
 
 def fit(parts: Sequence[Seg], width: int, ell: str) -> list[Seg]:
-    """Tronca ai `width` caratteri visibili aggiungendo l'ellissi."""
+    """Truncate to `width` visible characters, adding the ellipsis."""
     if width <= 0:
         return []
     if seg_width(parts) <= width:
@@ -97,7 +97,7 @@ def paint_segs(theme: Theme, parts: Sequence[Seg]) -> str:
 
 
 def merge(parts: Sequence[Seg]) -> list[Seg]:
-    """Unisce i frammenti adiacenti con lo stesso stile (meno sequenze da stampare)."""
+    """Merge adjacent fragments with the same style (fewer sequences to print)."""
     out: list[Seg] = []
     for s in parts:
         if out and (out[-1].role, out[-1].bold, out[-1].fg, out[-1].bg) == (s.role, s.bold, s.fg, s.bg):
@@ -115,7 +115,7 @@ def table(theme: Theme, headers: Sequence[str], rows: Sequence[Sequence[Cell]],
     body = [[segs(c) for c in row] for row in rows]
     for row in body:
         if len(row) != n:
-            raise ValueError("riga con numero di colonne diverso dall'intestazione")
+            raise ValueError("row with a different number of columns than the header")
     widths = [max([seg_width(head[i])] + [seg_width(r[i]) for r in body]) for i in range(n)]
     excess = sum(widths) + 3 * n + 1 - width
     while excess > 0:
@@ -158,8 +158,8 @@ def panel(theme: Theme, title: Sequence[Seg], lines: Sequence[Sequence[Seg]],
         return theme.paint(text, border)
 
     rw = seg_width(right)
-    # Larghezza fissa del bordo superiore: "╭─ " + titolo + " " + riempimento
-    # [+ " " + destra + " "] + "─╮"  ->  6 caratteri + eventuale destra.
+    # Fixed width of the top border: "╭─ " + title + " " + fill
+    # [+ " " + right + " "] + "─╮"  ->  6 characters + optional right part.
     reserve = 6 + (rw + 2 if right else 0)
     t = fit(title, max(1, width - reserve - 1), ell)
     fill = max(1, width - (seg_width(t) + reserve))
@@ -199,10 +199,10 @@ Section = tuple["Sequence[Seg] | None", "Sequence[Sequence[Seg]]"]
 
 def box(theme: Theme, title: Sequence[Seg], sections: Sequence[Section], *, width: int,
         border: str = "brown", caption: Sequence[Seg] = ()) -> list[str]:
-    """Riquadro con titolo, sezioni separate da righe con intestazione e didascalia in basso.
+    """Box with a title, sections separated by headed rules, and a caption at the bottom.
 
-    Ogni sezione è (intestazione | None, righe). Restituisce le righe già colorate,
-    tutte larghe `width` colonne, così si possono affiancare ad altri riquadri.
+    Each section is (heading | None, lines). Returns the already-colored lines,
+    all `width` columns wide, so they can be placed side by side with other boxes.
     """
     g = theme.glyph
     ell = g("ell")
