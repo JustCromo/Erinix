@@ -32,6 +32,7 @@ from erinix.ui.render import Seg, fit, paint_segs, safe
 from erinix.ui.theme import Theme
 
 MAX_OUTPUT_LINES = 5000
+MAX_BLOCK_WIDTH = 120
 WHEEL_STEP = 3
 FLASH_SECONDS = 2.0
 DRAW_INTERVAL = 0.03
@@ -54,6 +55,11 @@ def sanitize_line(line: str) -> str:
         pos = m.end()
     out.append(_strip_controls(line[pos:]))
     return "".join(out)
+
+
+def content_width(cols: int) -> int:
+    """Larghezza con cui si disegnano tabelle e pannelli per un terminale di `cols` colonne."""
+    return max(30, min(cols, MAX_BLOCK_WIDTH))
 
 
 class LineSink:
@@ -92,18 +98,24 @@ class TuiApp:
                  session: welcome.SessionInfo | None = None,
                  session_fn: Callable[[], welcome.SessionInfo] = welcome.session_info,
                  history: list[str] | None = None, history_file: Path | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 size_fn: Callable[[], tuple[int, int]] = term.terminal_size) -> None:
         self.registry = registry
         self.theme = theme
         self.out = out
         self._session_fn = session_fn
+        self._size_fn = size_fn
         self.session = session or session_fn()
         self._welcome_key: tuple | None = None
         self._welcome_lines: list[str] = []
         self.editor = LineEditor(history)
         self.history_file = history_file
         self.clock = clock
-        self.lines: list[str] = []
+        # Il documento è fatto di elementi: righe di testo oppure blocchi (tabelle, pannelli)
+        # che si ridisegnano quando il terminale cambia larghezza.
+        self.items: list = []
+        self._rendered: list[str] = []
+        self._rendered_width: int | None = None
         self.scroll = 0
         self.selection: term.Selection | None = None
         self.done = False
@@ -119,17 +131,51 @@ class TuiApp:
         self._drag = False
         sink = LineSink(self)
         self._sink = sink
-        self.ctx = Context(theme, theme, sink, sink)  # type: ignore[arg-type]
+        self.ctx = Context(theme, theme, sink, sink, self.append_block)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------- documento
-    def append_line(self, line: str) -> None:
-        self.lines.append(line)
-        if len(self.lines) > MAX_OUTPUT_LINES:
-            del self.lines[: len(self.lines) - MAX_OUTPUT_LINES]
+    @property
+    def lines(self) -> list[str]:
+        """Righe del documento disegnate alla larghezza corrente."""
+        return self._rendered
+
+    def _width_now(self) -> int:
+        return self._rendered_width or content_width(self._size_fn()[0])
+
+    def _render_item(self, item, width: int) -> list[str]:
+        if isinstance(item, str):
+            return [item]
+        try:
+            text = item(width)
+        except Exception as exc:  # un blocco difettoso non deve far cadere la console
+            return [self.theme.paint(f"errore di visualizzazione ({type(exc).__name__})", "bad")]
+        return [sanitize_line(line) for line in text.split("\n")]
+
+    def _rerender(self, width: int) -> None:
+        self._rendered = [line for item in self.items for line in self._render_item(item, width)]
+        self._rendered_width = width
+
+    def _trim(self) -> None:
+        if len(self.items) > MAX_OUTPUT_LINES:
+            del self.items[: len(self.items) - MAX_OUTPUT_LINES]
             self.selection = None
+            self._rerender(self._width_now())
+
+    def append_line(self, line: str) -> None:
+        self.items.append(line)
+        self._rendered.append(line)
+        self._trim()
+
+    def append_block(self, renderable) -> None:
+        self._sink.flush_partial()
+        self.items.append(renderable)
+        self._rendered.extend(self._render_item(renderable, self._width_now()))
+        self._trim()
+        self.draw()
 
     def clear(self) -> None:
-        self.lines.clear()
+        self.items.clear()
+        self._rendered = []
         self.scroll = 0
         self.selection = None
         self.session = self._session_fn()      # rilegge privilegi e sensore disponibili
@@ -167,6 +213,9 @@ class TuiApp:
             self._last_cols = cols
             self.selection = None
         view_rows = max(1, rows - 1)
+        width = content_width(cols)
+        if width != self._rendered_width:
+            self._rerender(width)              # tabelle e pannelli si adattano alla nuova larghezza
         prompt_text, cursor_col = self._prompt_line(cols)
         key = (cols, self.session, self.theme.color_level)
         if key != self._welcome_key:
@@ -200,7 +249,7 @@ class TuiApp:
         if not force and now - self._last_draw < DRAW_INTERVAL:
             return
         self._last_draw = now
-        cols, rows = term.terminal_size()
+        cols, rows = self._size_fn()
         self.out.write(self.render_frame(cols, rows))
         self.out.flush()
 
@@ -382,7 +431,7 @@ class TuiApp:
                         continue
                     except EOFError:
                         break
-                    size_changed = term.terminal_size()[0] != self._last_cols
+                    size_changed = self._size_fn()[0] != self._last_cols
                     flash_over = bool(self.flash) and self.clock() >= self._flash_until
                     if flash_over:
                         self.flash = ""

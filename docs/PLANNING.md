@@ -208,6 +208,7 @@ Principio: l'agente (servizio con privilegi) non si avvia né si controlla dalla
 - **Zero dipendenze**: solo libreria standard (`termios`, `select`). I mattoni del terminale (tasti, mouse, selezione) partono dall'esperienza di Vulpnix, con alcune correzioni: decodifica UTF-8 incrementale (le lettere accentate non si spezzano), evidenziazione che conserva i colori, copia negli appunti con limite di dimensione.
 - **Output sanificato**: ogni testo che arriva da file o processi passa da `safe()`, e la console lascia passare verso il terminale solo testo e sequenze di colore: nessuna sequenza OSC (appunti, titolo), nessuno spostamento del cursore o cancellazione dello schermo può essere iniettata da un comando o da un processo ostile. Le larghezze si calcolano sul testo semplice.
 - **Incolla protetta** (bracketed paste): il testo incollato finisce nella riga e non esegue mai nulla; gli «a capo» diventano spazi e la lunghezza è limitata.
+- **Ridimensionamento**: tabelle e pannelli sono blocchi che si ridisegnano alla larghezza corrente (massimo 120 colonne, per leggibilità), anche quando il terminale si riallarga; le righe di testo restano intere e si tagliano solo in visualizzazione.
 - **Mouse**: rotella e PgUp/PgDn per scorrere; trascinare seleziona e copia negli appunti. Il terminale viene sempre ripristinato (schermo, mouse, cursore), anche in caso di errore o di segnale.
 - **Cronologia** in `~/.local/state/erinix/history` con permessi 0600: non si legge se non è dell'utente o se è accessibile ad altri, non si scrive attraverso un symlink. I comandi marcati `sensitive` non finiscono in cronologia.
 - **Colori**: informazioni ed evidenze in toni di riccio (marrone chiaro per le informazioni, marrone scuro per i bordi, arancio freddo per titoli e comandi); tutto il resto nel colore predefinito del terminale; rosso, verde e giallo riservati alle segnalazioni (gravità: `low` verde, `medium` giallo, `high` rosso, `critical` bianco su rosso). Supporto truecolor, 256 e 16 colori, oppure nessuno: si rispetta `NO_COLOR`, si può forzare con `ERINIX_COLOR=always|never` e disattivare per un comando con `--no-color`. Fallback ASCII se il terminale non è UTF-8.
@@ -258,6 +259,7 @@ Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto)
 | 2026-10-24 | Console interattiva e riga di comando dallo stesso registro; agente separato, CLI e web come client | Chiudere l'interfaccia non deve spegnere la protezione; un client compromesso non ha i poteri dell'agente |
 | 2026-10-24 | Palette a toni di riccio per le informazioni, semaforo per le segnalazioni; `NO_COLOR` rispettato | Leggibilità e identità visiva coerente con la suite |
 | 2026-10-24 | Console a schermo intero con mascotte (riccio), riquadri a sezioni, mouse e copia; console classica come ripiego | Stessa esperienza di Vulpnix, senza dipendenze |
+| 2026-10-24 | L'output dei comandi è fatto di blocchi ridisegnabili, non di righe già impaginate | Riallargando il terminale le tabelle devono tornare grandi, non restare alla larghezza di quando sono state stampate |
 
 ### Ancora da decidere o riconfermare
 

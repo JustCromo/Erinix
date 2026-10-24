@@ -26,6 +26,9 @@ class Context:
     err_theme: Theme
     out: TextIO
     err: TextIO
+    # Se impostato (console a schermo intero), riceve i blocchi che dipendono dalla
+    # larghezza, così si possono ridisegnare quando il terminale cambia dimensione.
+    emitter: Callable[[Callable[[int], str]], None] | None = None
 
     @classmethod
     def from_env(cls, color: bool = True) -> "Context":
@@ -40,8 +43,15 @@ class Context:
     def line(self, *parts: Seg) -> None:
         self.say(paint_segs(self.theme, [Seg(safe(p.text), p.role, p.bold) for p in parts]))
 
+    def emit(self, renderable: Callable[[int], str]) -> None:
+        """Stampa un blocco (tabella, pannello) la cui forma dipende dalla larghezza."""
+        if self.emitter is not None:
+            self.emitter(renderable)
+        else:
+            self.say(renderable(self.theme.width))
+
     def table(self, headers: Sequence[str], rows: Sequence[Sequence[Cell]]) -> None:
-        self.say(table(self.theme, headers, rows))
+        self.emit(lambda width: table(self.theme, headers, rows, width=width))
 
     def error(self, text: str) -> None:
         mark = self.err_theme.paint(self.err_theme.glyph("bad"), "bad", True)

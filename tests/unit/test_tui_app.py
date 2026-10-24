@@ -25,9 +25,12 @@ class Clock:
 
 
 def make_app(session=SESSION, registry=None, history=None, color=3, clock=None):
-    return TuiApp(registry or build_registry(), theme=Theme(color, True, 120), out=io.StringIO(),
-                  session=session, session_fn=lambda: session, history=history,
-                  clock=clock or Clock())
+    size = [130, 40]                                  # dimensione "del terminale", modificabile
+    app = TuiApp(registry or build_registry(), theme=Theme(color, True, 120), out=io.StringIO(),
+                 session=session, session_fn=lambda: session, history=history,
+                 clock=clock or Clock(), size_fn=lambda: (size[0], size[1]))
+    app.size = size
+    return app
 
 
 def type_line(app, text, enter=True):
@@ -42,6 +45,7 @@ def doc_text(app):
 
 
 def frame(app, cols=130, rows=40):
+    app.size[:] = [cols, rows]
     return app.render_frame(cols, rows)
 
 
@@ -331,3 +335,78 @@ def test_history_file_roundtrip(tmp_path, monkeypatch):
     assert h.read_lines(path) == ["help", "doctor"]
     path.chmod(0o644)
     assert h.read_lines(path) == []              # accessibile ad altri: ignorato
+
+
+# ----------------------------------------------------------- ridimensionamento
+def panel_widths(app):
+    return {t.visible_width(line) for line in app.lines if t.strip_ansi(line).startswith("╭─ ")}
+
+
+def test_tables_redraw_wider_when_the_terminal_grows_again():
+    app = make_app()
+    frame(app, cols=60, rows=40)
+    type_line(app, "help")
+    narrow = doc_text(app)
+    assert "…" in narrow and "Elenco dei comandi" not in narrow     # tabella stretta: testo troncato
+    frame(app, cols=130, rows=40)
+    wide = doc_text(app)
+    assert "Elenco dei comandi" in wide and "Rigioca un attacco simulato e mostra gli alert" in wide
+    frame(app, cols=60, rows=40)
+    assert "Elenco dei comandi" not in doc_text(app)                 # e si restringe di nuovo
+    box = [t.strip_ansi(line) for line in app.lines if t.strip_ansi(line)[:1] in "╭│├╰"]
+    assert box and all(t.visible_width(line) <= 60 for line in box)      # le tabelle si adattano
+
+
+def test_alert_panels_follow_the_terminal_width():
+    app = make_app()
+    frame(app, cols=130, rows=40)
+    type_line(app, f"replay revshell --fast --rules {REPO_RULES}")
+    assert panel_widths(app) == {120}                                # massimo di lettura
+    frame(app, cols=90, rows=40)
+    assert panel_widths(app) == {90}
+    frame(app, cols=110, rows=40)
+    assert panel_widths(app) == {110}
+
+
+def test_plain_text_lines_are_never_lost_when_shrinking():
+    app = make_app()
+    frame(app, cols=130, rows=40)
+    type_line(app, "help")
+    long_line = "In console scrivi i comandi senza 'erinix' davanti."
+    frame(app, cols=60, rows=40)
+    assert "In console scrivi i comandi" in doc_text(app)
+    assert long_line in doc_text(app)                                # la riga intera resta nel documento
+
+
+def test_broken_block_does_not_crash_the_console():
+    app = make_app()
+
+    def broken(width):
+        raise ValueError("rotto")
+
+    app.append_block(broken)
+    assert "errore di visualizzazione (ValueError)" in doc_text(app)
+    frame(app, cols=100, rows=30)
+    type_line(app, "version")
+    assert "erinix 0.1.0" in doc_text(app)
+
+
+def test_block_output_is_sanitized():
+    app = make_app()
+    app.append_block(lambda w: "ok\x1b]52;c;ZXZpbA==\x07\x1b[2Jfine")
+    out = frame(app)
+    text = t.strip_ansi(out)
+    assert "\x1b]" not in out and "\x1b[2J" not in out and "\x07" not in out
+    assert "ok" in text and "fine" in text
+
+
+def test_selection_is_cleared_when_resizing_with_blocks():
+    app = make_app()
+    frame(app, cols=130)
+    type_line(app, "help")
+    frame(app, cols=130)
+    mouse(app, 0, 1, 2)
+    mouse(app, 32, 6, 2)
+    assert app.selection is not None
+    frame(app, cols=100)
+    assert app.selection is None

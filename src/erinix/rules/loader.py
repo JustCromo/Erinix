@@ -421,9 +421,9 @@ def load_rules(path: str | os.PathLike[str]) -> RuleSet:
     try:
         st = os.lstat(path)
     except OSError as exc:
-        raise RuleError(f"{_short(path)}: {exc.strerror}") from None
+        raise RuleError(f"{_short(path, 200)}: {exc.strerror}") from None
     if stat.S_ISLNK(st.st_mode):
-        raise RuleError(f"{_short(path)}: i symlink non sono ammessi")
+        raise RuleError(f"{_short(path, 200)}: i symlink non sono ammessi")
     builder = _Builder()
     if stat.S_ISDIR(st.st_mode):
         dir_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
