@@ -1,0 +1,43 @@
+schema = 1
+
+# Web service compromise: shell spawned by a service, outbound connection
+# from that shell, then privilege escalation.
+[[chain]]
+id = "web-rce-revshell"
+description = "A network service spawns a shell that opens an outbound connection (web RCE to reverse shell), then escalates to root."
+mitre = ["T1190", "T1059.004", "T1068"]
+window_seconds = 600
+link = "process_tree"
+response = "interactive"
+justification = "A web server or application server has no legitimate reason to run a shell that then connects to an external host: the sequence is a confirmed reverse shell."
+
+[[chain.step]]
+id = "service-spawns-shell"
+event = "process.exec"
+severity = "medium"
+[chain.step.match]
+ancestor_exe = [
+  "/usr/sbin/apache2", "/usr/bin/httpd", "/usr/sbin/httpd",
+  "/usr/sbin/nginx", "/usr/bin/nginx",
+  "/usr/sbin/php-fpm", "/usr/bin/php-fpm",
+]
+exe = [
+  "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/dash",
+  "/bin/sh", "/bin/bash", "/bin/dash",
+]
+
+[[chain.step]]
+id = "shell-connects-outbound"
+event = "net.connect"
+severity = "high"
+response = "auto"
+[chain.step.match]
+remote_external = true
+
+[[chain.step]]
+id = "escalation-to-root"
+event = "priv.uid_change"
+severity = "critical"
+response = "interactive"
+[chain.step.match]
+became_root = true
