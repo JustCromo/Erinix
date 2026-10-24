@@ -1,271 +1,271 @@
-# Erinix: planning e scelte di progetto
+# Erinix: planning and design decisions
 
-Documento vivo. Spiega **cosa** abbiamo deciso e **perché**, in particolare per la sicurezza.
-Il `README.md` spiegherà invece come installare e usare il tool.
+Living document. It explains **what** we decided and **why**, especially for security.
+The `README.md` explains how to install and use the tool.
 
-Regola di lavoro: ogni nuova scelta di sicurezza o di architettura si aggiunge qui,
-nella sezione giusta e nel registro finale.
+Working rule: every new security or architecture decision is added here, in the right
+section and in the final log.
 
-Ultimo aggiornamento: 24 ottobre 2026.
+Last updated: October 24, 2026.
 
 ---
 
-## 1. Obiettivo e perimetro
+## 1. Goal and scope
 
-Erinix è un IDS **host-based** per Linux, con risposta attiva opzionale. Non si limita
-a registrare eventi singoli: ragiona per **catene d'attacco**, cioè sequenze di passi
-collegati (servizio compromesso, shell, connessione verso l'esterno, privilege escalation),
-come un attaccante che segue la strategia imparata nei pen test.
+Erinix is a **host-based** IDS for Linux, with optional active response. It does not just
+log single events: it reasons about **attack chains**, that is, sequences of linked steps
+(compromised service, shell, outbound connection, privilege escalation), like an attacker
+following the strategy learned in pen tests.
 
-Priorità, in quest'ordine:
+Priorities, in this order:
 
-1. **Rilevamento**: la parte che deve funzionare meglio di tutte.
-2. **Risposta**: poche azioni (terminare l'albero di processi, bloccare un IP), fatte con la massima prudenza.
-3. **Assessment dell'incidente, console web, integrazione con Vulpnix**: costruiti sopra i primi due.
+1. **Detection**: the part that must work better than anything else.
+2. **Response**: a few actions (terminate the process tree, block an IP), done with the utmost care.
+3. **Incident assessment, web console, Vulpnix integration**: built on top of the first two.
 
-Fuori perimetro per ora: analisi del traffico di rete a livello di pacchetto (NIDS), anomaly detection statistica, multi-host.
+Out of scope for now: packet-level network traffic analysis (NIDS), statistical anomaly detection, multi-host.
 
-## 2. La suite Nemirix
+## 2. The Nemirix suite
 
-- **Nemirix**: la suite (il nome viene da *Nemi*, il bosco sacro in cui il *rex Nemorensis* vegliava senza mai abbassare la guardia, e dal suffisso gallico *-rix*, "re").
-- **Vulpnix**: risk assessment, il *prima* dell'attacco (postura della macchina).
-- **Erinix**: rilevamento, risposta e valutazione dell'incidente, il *durante* e il *dopo*.
+- **Nemirix**: the suite (the name comes from *Nemi*, the sacred grove where the *rex Nemorensis* kept watch without ever lowering his guard, and from the Gaulish suffix *-rix*, "king").
+- **Vulpnix**: risk assessment, the *before* of an attack (posture of the machine).
+- **Erinix**: detection, response and incident assessment, the *during* and the *after*.
 
-Principi:
+Principles:
 
-- **Ogni tool funziona da solo**, dal proprio terminale. La console web è il punto d'incontro e mostra i moduli installati.
-- **Compartimentazione**: ogni tool ha il proprio utente di sistema e il proprio database, leggibile solo da quell'utente. Compromettere uno non dà accesso ai dati dell'altro.
-- **Riconoscimento della suite**: una cartella di registro di proprietà di root, in cui ogni tool deposita la propria scheda (nome, versione, canale locale, chiave pubblica).
-- **Contro chi finge di essere un tool**: comunicazione tramite socket Unix locali (il kernel dichiara l'utente dall'altra parte, dato non falsificabile) e report scambiati **firmati**; se la firma non torna il report è rifiutato.
-- **Contratto dati comune**: schema JSON versionato di Vulpnix come base, stessa scala di gravità, stesse convenzioni.
+- **Every tool works on its own**, from its own terminal. The web console is the meeting point and shows the installed modules.
+- **Compartmentalization**: each tool has its own system user and its own database, readable only by that user. Compromising one does not give access to the other's data.
+- **Suite recognition**: a registry folder owned by root, where each tool drops its own card (name, version, local channel, public key).
+- **Against anyone pretending to be a tool**: communication over local Unix sockets (the kernel tells who is on the other side, which cannot be forged) and **signed** reports; if the signature does not match, the report is rejected.
+- **Common data contract**: Vulpnix's versioned JSON schema as the base, same severity scale, same conventions.
 
-## 3. Stack tecnico
+## 3. Technical stack
 
-| Scelta | Motivo |
+| Choice | Reason |
 |---|---|
-| **Python** per agente e web | Padroneggiato dall'autore: in un progetto difeso a colloquio conta più della velocità teorica. Python è memory-safe. Il lavoro pesante lo fa il kernel (eBPF/auditd), non Python. |
-| **FastAPI + SQLite** per console e DB | Architettura locale per la prima versione. Un file, zero configurazione. |
-| **Regole in TOML** | Vedi sezione 6. Parser incluso in Python (`tomllib`), **zero dipendenze esterne**. |
-| **Dipendenze minime e con versione fissata** | Ogni libreria in un processo root è superficie d'attacco. |
+| **Python** for agent and web | Mastered by the author: in a project that is defended in interviews this matters more than theoretical speed. Python is memory-safe. The heavy lifting is done by the kernel (eBPF/auditd), not by Python. |
+| **FastAPI + SQLite** for console and DB | Local architecture for the first version. One file, zero configuration. |
+| **Rules in TOML** | See section 6. Parser included in Python (`tomllib`), **zero external dependencies**. |
+| **Minimal, version-pinned dependencies** | Every library inside a root process is attack surface. |
 
-Agente e web sono **processi separati**: l'agente ha i privilegi, la web app **mai** root.
+Agent and web are **separate processes**: the agent has the privileges, the web app is **never** root.
 
-## 4. Sensori
+## 4. Sensors
 
-**eBPF (CO-RE) è il sensore principale. auditd è il fallback. La modalità minimale è l'ultima rete di sicurezza.**
+**eBPF (CO-RE) is the main sensor. auditd is the fallback. The minimal mode is the last safety net.**
 
-- **eBPF**: programmi nel kernel agganciati ai punti che interessano, eventi già strutturati, filtro a monte.
-  Scelta **CO-RE** (compila una volta, gira ovunque) invece di bcc: nessun compilatore sulla macchina protetta,
-  avvio istantaneo, è la pratica raccomandata oggi. Richiede kernel con BTF; compilazione per x86_64 e ARM.
-- **auditd**: fallback su kernel vecchi o senza BTF.
-- **Minimale**: `/proc` e log di autenticazione, a intervalli. Vede meno e in ritardo, ma non resta cieco.
+- **eBPF**: programs inside the kernel attached to the points of interest, already-structured events, filtering upstream.
+  **CO-RE** (compile once, run everywhere) was chosen instead of bcc: no compiler on the protected machine,
+  instant startup, and it is the recommended practice today. Requires a kernel with BTF; builds for x86_64 and ARM.
+- **auditd**: fallback on old kernels or kernels without BTF.
+- **Minimal**: `/proc` and authentication logs, at intervals. It sees less and later, but it is not blind.
 
-Regole di funzionamento:
+Operating rules:
 
-- All'avvio Erinix controlla privilegi, supporto eBPF/BTF e stato di auditd, sceglie la modalità e **dichiara sempre quale è e cosa non può vedere** (evento di stato del sensore, mostrato anche in console).
-- Si può forzare a mano (`--sensor auditd`). Se la modalità forzata non è disponibile, Erinix **si rifiuta di partire** invece di degradare in silenzio.
-- Cambio di modalità a caldo: il nuovo sensore parte **prima** che il vecchio si spenga, i doppioni vengono scartati, così non esiste un istante di cecità.
-- **Anti-declassamento**: un attaccante potrebbe voler forzare il passaggio a un sensore che vede meno. Il cambio lo può chiedere solo root dal canale di controllo locale, e ogni cambio genera un alert.
-- Il motore di correlazione **non sa da dove arrivano gli eventi**: riceve sempre lo stesso formato.
-- La scelta della modalità sta in `sensors/selector.py` (rilevamento di privilegi, kernel, BTF, auditd) e si controlla con `erinix doctor`. Senza root il piano è «osservatore» e `doctor` dice anche cosa si potrebbe fare con i privilegi.
+- At startup Erinix checks privileges, eBPF/BTF support and auditd state, picks the mode and **always declares which one it is and what it cannot see** (sensor status event, also shown in the console).
+- It can be forced by hand (`--sensor auditd`). If the forced mode is not available, Erinix **refuses to start** instead of silently degrading.
+- Hot mode switch: the new sensor starts **before** the old one stops, duplicates are discarded, so there is never a moment of blindness.
+- **Anti-downgrade**: an attacker might want to force a switch to a sensor that sees less. Only root can request the switch, through the local control channel, and every switch raises an alert.
+- The correlation engine **does not know where events come from**: it always receives the same format.
+- The mode choice lives in `sensors/selector.py` (detection of privileges, kernel, BTF, auditd) and can be checked with `erinix doctor`. Without root the plan is "observer", and `doctor` also says what would be possible with privileges.
 
-## 5. Privilegi
+## 5. Privileges
 
-- **Modalità principale: root**, perché eBPF, auditd, blocco IP e terminazione processi lo richiedono.
-- **Modalità rootless**: "osservatore che avvisa". Legge `/proc` e i log accessibili, apre esche su porte alte, invia alert. Non può usare eBPF/auditd né agire. Dichiara chiaramente i propri limiti all'avvio.
-- Come servizio systemd: solo le capability necessarie, filesystem in sola lettura dove possibile.
+- **Main mode: root**, because eBPF, auditd, IP blocking and process termination require it.
+- **Rootless mode**: "observer that warns". It reads `/proc` and the accessible logs, opens decoys on high ports, sends alerts. It cannot use eBPF/auditd or act. It clearly declares its limits at startup.
+- As a systemd service: only the necessary capabilities, read-only filesystem where possible.
 
-## 6. Regole (`rules/*.toml`)
+## 6. Rules (`rules/*.toml`)
 
-**Perché TOML e non YAML**: `tomllib` è nella libreria standard, quindi nessuna dipendenza esterna e meno superficie
-d'attacco. Il parser YAML è storicamente fonte di vulnerabilità e `PyYAML` sarebbe un pacchetto in più dentro un processo privilegiato.
-Il prezzo è una sintassi leggermente più verbosa per le catene.
+**Why TOML and not YAML**: `tomllib` is in the standard library, so there is no external dependency and less attack
+surface. YAML parsers have historically been a source of vulnerabilities, and `PyYAML` would be one more package inside a privileged process.
+The price is a slightly more verbose syntax for chains.
 
-Due tipi di regola:
+Two kinds of rule:
 
-- **`[[indicator]]`**: un evento singolo già sospetto.
-- **`[[chain]]`** con `[[chain.step]]`: una sequenza di passi collegati (almeno 2).
+- **`[[indicator]]`**: a single event that is already suspicious.
+- **`[[chain]]`** with `[[chain.step]]`: a sequence of linked steps (at least 2).
 
-Concetti:
+Concepts:
 
-- **`link`**: cosa rende i passi la stessa storia. `process_tree` (il processo del primo passo o un suo discendente), `login_session` (stessa sessione di login), `remote_ip` (stesso indirizzo remoto).
-- **`window_seconds`**: entro quanto tempo devono avvenire i passi.
-- **`count`**: il passo richiede N eventi (es. 5 login falliti).
-- **`response`**: `report_only` (default), `interactive`, `auto`. Può essere sovrascritta per singolo passo, perché la risposta si aggancia al passo e non alla fine della catena (tempestività).
-- **`mitre`**: tecniche MITRE ATT&CK collegate.
+- **`link`**: what makes the steps the same story. `process_tree` (the process of the first step or one of its descendants), `login_session` (same login session), `remote_ip` (same remote address).
+- **`window_seconds`**: how long the steps have to happen in.
+- **`count`**: the step needs N events (e.g. 5 failed logins).
+- **`response`**: `report_only` (default), `interactive`, `auto`. It can be overridden per step, because the response is attached to the step and not to the end of the chain (timeliness).
+- **`mitre`**: related MITRE ATT&CK techniques.
 
-Sicurezza delle regole (verificata all'avvio da `erinix rules validate`):
+Rule security (checked at startup by `erinix rules validate`):
 
-1. **Solo dichiarative**: nessun codice, nessun `eval`.
-2. **Nessuna espressione regolare**: solo valori esatti, prefissi e liste (elimina il ReDoS).
-3. **Schema chiuso**: un campo sconosciuto invalida la regola. I campi ammessi in `match` dipendono dal tipo di evento.
-4. **Regola malformata = regola scartata e segnalata**, mai eseguita; le altre restano attive.
-5. **File fidati**: di root (o dell'utente che esegue Erinix), non scrivibili da gruppo/altri, non symlink, cartella inclusa. Se la cartella stessa è inaffidabile non si carica nulla.
-6. **Limiti rigidi**: dimensione file, numero di regole, passi, elementi per lista, lunghezza stringhe.
-7. **Percorsi sempre assoluti**, caratteri di controllo vietati.
-8. **Una regola con risposta `auto` deve avere `justification`**: l'autore deve scrivere perché la certezza è assoluta. Rende l'automatismo revisionabile.
-9. **Output sanificato**: tutto ciò che deriva da file esterni viene ripulito prima di essere stampato.
+1. **Declarative only**: no code, no `eval`.
+2. **No regular expressions**: only exact values, prefixes and lists (this removes ReDoS).
+3. **Closed schema**: an unknown field invalidates the rule. The fields allowed in `match` depend on the event type.
+4. **Malformed rule = rule discarded and reported**, never executed; the others stay active.
+5. **Trusted files**: owned by root (or by the user running Erinix), not writable by group/others, not symlinks, folder included. If the folder itself is untrustworthy, nothing is loaded.
+6. **Hard limits**: file size, number of rules, steps, items per list, string length.
+7. **Always absolute paths**, control characters forbidden.
+8. **A rule with response `auto` must have `justification`**: the author has to write why the certainty is absolute. This makes the automatic behavior reviewable.
+9. **Sanitized output**: everything that comes from external files is cleaned before being printed.
 
-## 7. Modello degli eventi
+## 7. Event model
 
-Un formato comune per tutti i sensori, con una "busta" (id, orologio monotono per ordinare e orologio reale per mostrare, sorgente, processo, sessione di login) e un contenuto per famiglia: processo, rete, privilegi, file, autenticazione, **stato del sensore**.
+One common format for all sensors, with an "envelope" (id, monotonic clock for ordering and wall clock for display, source, process, login session) and a content part per family: process, network, privileges, file, authentication, **sensor status**.
 
-Scelte di sicurezza:
+Security choices:
 
-1. **Identità del processo = PID + istante di avvio.** Il PID viene riciclato: un vecchio PID riassegnato non deve ereditare la catena di un altro processo.
-2. **Mai fidarsi del nome del processo** (`comm`): un attaccante lo rinomina in `sshd` in un istante. Fa fede il percorso dell'eseguibile visto dal kernel. La discordanza è un segnale debole, da contestualizzare (è normale per script e interpreti).
-3. **`loginuid`**: distingue una shell nata da un login (admin) da una nata da un servizio (probabile exploit).
-4. **Tutto ciò che arriva dai processi è input ostile**: lunghezze limitate, byte non validi senza perdita né crash, numero di argomenti limitato.
-5. **Dati conservati grezzi, escape solo in output** (proposta adottata, da riconfermare): le prove restano intatte e la dashboard non può diventare vettore d'attacco.
-6. **Corsia riservata**: gli eventi critici (exec, cambi di uid, rete, stato sensore) viaggiano su un canale con spazio proprio.
-7. **Albero dei processi a memoria limitata**: si sacrificano prima i processi terminati; se si perde un processo vivo lo si **conta e lo si dichiara**.
-8. **Il sensore deve segnalare quando è cieco**: avvio, modalità, eventi persi, sensore fermato.
-9. **Percorsi canonici dai sensori**: i percorsi dei file devono arrivare già risolti (niente `/etc/../etc/shadow`, niente symlink) e l'eseguibile deve essere quello visto dal kernel. Il motore confronta stringhe esatte e si fida del sensore su questo punto.
+1. **Process identity = PID + start time.** PIDs get recycled: an old PID that is reassigned must not inherit another process's chain.
+2. **Never trust the process name** (`comm`): an attacker can rename it to `sshd` in an instant. The executable path seen by the kernel is what counts. A mismatch is a weak signal, to be put in context (it is normal for scripts and interpreters).
+3. **`loginuid`**: tells a shell started from a login (admin) from one started by a service (likely exploit).
+4. **Everything that comes from processes is hostile input**: limited lengths, invalid bytes handled without loss or crash, limited number of arguments.
+5. **Data stored raw, escaping only on output** (adopted proposal, to be reconfirmed): the evidence stays intact and the dashboard cannot become an attack vector.
+6. **Reserved lane**: critical events (exec, uid changes, network, sensor status) travel on a channel with its own space.
+7. **Process tree with bounded memory**: exited processes are sacrificed first; if a live process is lost it is **counted and declared**.
+8. **The sensor must report when it is blind**: startup, mode, lost events, stopped sensor.
+9. **Canonical paths from sensors**: file paths must arrive already resolved (no `/etc/../etc/shadow`, no symlinks) and the executable must be the one seen by the kernel. The engine compares exact strings and trusts the sensor on this point.
 
-## 8. Correlazione e allarmi
+## 8. Correlation and alerts
 
-- **Un solo alert per catena in corso**, che si aggiorna (stesso `alert_id`, `revision` crescente). Niente notifiche multiple per lo stesso attacco.
-- **Gravità progressiva**: pari alla più alta tra i passi completati. Si segnala già dal primo passo, perché conta la tempestività.
-- **La risposta si aggancia al passo**: per esempio "servizio che genera shell" seguito da "connessione esterna" è già una reverse shell confermata, e si interviene prima che l'attaccante cerchi la scalata. L'alert riporta il livello di risposta del passo appena raggiunto.
+- **A single alert per chain in progress**, which is updated (same `alert_id`, growing `revision`). No multiple notifications for the same attack.
+- **Progressive severity**: equal to the highest among the completed steps. It reports already from the first step, because timeliness matters.
+- **The response is attached to the step**: for example "service spawns a shell" followed by "outbound connection" is already a confirmed reverse shell, and action is taken before the attacker looks for escalation. The alert reports the response level of the step just reached.
 
-Come ragiona il motore (`engine/correlator.py`):
+How the engine reasons (`engine/correlator.py`):
 
-- **Un'istanza per "storia"**, identificata dal legame della regola: la radice dell'albero di processi (`process_tree`), la sessione di login (`login_session`) o l'indirizzo remoto (`remote_ip`).
-- **I passi si completano in ordine.** Un solo evento completa al massimo un passo.
-- **Finestra scorrevole per `count`** (come fail2ban): per un passo con `count = 5` valgono 5 eventi qualsiasi caduti negli ultimi `window_seconds`. Scelta per semplicità e prevedibilità; gli attacchi lenti si coprono con una seconda regola a finestra lunga e soglia più alta, non complicando il motore.
-- **Dopo il primo passo** l'intera catena deve concludersi entro `window_seconds` dall'inizio; poi l'istanza scade e una nuova storia può ripartire.
-- **Albero dei processi aggiornato dal motore**: un processo con lo stesso PID ma un altro istante di avvio è un altro processo e non eredita la catena.
-- **Indicatori**: un alert per coppia (regola, processo); i duplicati vengono **contati** (`suppressed_duplicates`), non ignorati in silenzio.
-- **Confronti senza regex**: valori esatti, prefissi, liste. Un campo sconosciuto non corrisponde mai (fallisce chiuso). Un eseguibile sconosciuto non conta come "inatteso" (il sensore potrebbe semplicemente non vederlo).
+- **One instance per "story"**, identified by the rule's link: the root of the process tree (`process_tree`), the login session (`login_session`) or the remote address (`remote_ip`).
+- **Steps are completed in order.** A single event completes at most one step.
+- **Sliding window for `count`** (like fail2ban): for a step with `count = 5`, any 5 events within the last `window_seconds` count. Chosen for simplicity and predictability; slow attacks are covered by a second rule with a longer window and a higher threshold, without complicating the engine.
+- **After the first step** the whole chain must finish within `window_seconds` of its start; then the instance expires and a new story can begin.
+- **Process tree updated by the engine**: a process with the same PID but a different start time is another process and does not inherit the chain.
+- **Indicators**: one alert per (rule, process) pair; duplicates are **counted** (`suppressed_duplicates`), not silently ignored.
+- **Comparisons without regex**: exact values, prefixes, lists. An unknown field never matches (it fails closed). An unknown executable does not count as "unexpected" (the sensor may simply not see it).
 
-Memoria e sovraccarico del motore:
+Engine memory and overload:
 
-- **Limite di istanze per regola.** Al limite si sacrificano **solo** i candidati che non hanno completato nessun passo (i più vecchi per primi); le catene già avanzate non si toccano mai. Se non c'è nulla da sacrificare, il nuovo candidato viene rifiutato.
-- **Ogni sacrificio o rifiuto è contato** e genera un alert critico `engine-overload` (al massimo uno al minuto): il flood è un segnale d'attacco, non un dettaglio tecnico.
-- Il rinvio su disco degli eventi in eccesso spetta al bus a corsie (sezione 9), non al motore.
+- **Instance limit per rule.** At the limit, **only** candidates that have not completed any step are sacrificed (oldest first); chains that have already advanced are never touched. If there is nothing to sacrifice, the new candidate is refused.
+- **Every sacrifice or refusal is counted** and raises a critical `engine-overload` alert (at most one per minute): a flood is an attack signal, not a technical detail.
+- Spilling excess events to disk is the job of the lane-based bus (section 9), not of the engine.
 
-## 9. Resistenza al sovraccarico
+## 9. Overload resistance
 
-Il sovraccarico è di per sé un segnale d'attacco: spesso il rumore serve a nascondere l'attacco vero. Impostazione per analogia col DDoS:
+Overload is itself an attack signal: noise is often there to hide the real attack. The approach is built by analogy with DDoS:
 
-| Contro un DDoS | In Erinix |
+| Against a DDoS | In Erinix |
 |---|---|
-| Limite per sorgente | Quota di eventi per albero di processi, utente o IP remoto |
-| Filtrare vicino all'origine | Filtri eBPF dentro il kernel, prima di Python |
-| Blocco temporaneo (blacklist con scadenza) | Terminazione dell'albero o blocco IP con scadenza |
-| Distinguere legittimo da bot | Lista intoccabile e servizi noti |
-| Corsie riservate (QoS) | Canale separato per gli eventi critici |
-| Assorbire il picco | Buffer grandi e spill su disco |
-| Monitorare e allertare | Raggiungere il limite è un allarme critico |
+| Per-source limit | Event quota per process tree, user or remote IP |
+| Filter close to the origin | eBPF filters inside the kernel, before Python |
+| Temporary block (blacklist with expiry) | Termination of the tree or IP block with expiry |
+| Tell legitimate from bot | Untouchable list and known services |
+| Reserved lanes (QoS) | Separate channel for critical events |
+| Absorb the peak | Large buffers and spill to disk |
+| Monitor and alert | Reaching the limit is a critical alarm |
 
-Principi:
+Principles:
 
-- **Non si abbassa la guardia**: durante un flood la sensibilità sale, non scende.
-- **Niente scarto silenzioso**: l'eccesso si rimanda (su disco), non si butta; se qualcosa va perso, lo si **conta e lo si dichiara**.
-- **La risposta colpisce il punto più vicino all'origine** (il processo figlio, l'IP remoto), mai un servizio nella lista intoccabile: altrimenti l'attaccante userebbe Erinix per chiudere fuori l'amministratore.
-- Limite onesto: con eBPF, se il buffer kernel-utente si riempie è il kernel a perdere eventi. Si riduce il rischio (buffer grande, filtri nel kernel) e si contano le perdite.
+- **The guard is never lowered**: during a flood sensitivity goes up, not down.
+- **No silent drops**: excess is deferred (to disk), not thrown away; if something is lost, it is **counted and declared**.
+- **The response hits the point closest to the origin** (the child process, the remote IP), never a service in the untouchable list: otherwise the attacker would use Erinix to lock the administrator out.
+- Honest limit: with eBPF, if the kernel-to-user buffer fills up, it is the kernel that loses events. The risk is reduced (large buffer, filters in the kernel) and losses are counted.
 
-## 10. Risposta attiva
+## 10. Active response
 
-Livelli per regola: **auto** (poche catene a certezza assoluta, con giustificazione), **interattiva** (notifica e schermata dedicata con la catena completa), **solo segnalazione**.
+Levels per rule: **auto** (a few chains with absolute certainty, with justification), **interactive** (notification and a dedicated screen with the full chain), **report only**.
 
-Protezioni (valgono per **tutte** le azioni, `auto` compreso):
+Protections (they apply to **all** actions, `auto` included):
 
-1. **Di default osserva e basta**: la risposta si attiva per scelta esplicita, mai al primo avvio. Una regola `auto` è inerte finché la risposta non è abilitata.
-2. **Lista intoccabile**: PID 1, Erinix stesso, la sessione dell'amministratore e i suoi genitori, il suo IP, localhost, i servizi critici.
-3. **Blocchi a scadenza**: se Erinix va in crash non resta nulla di permanente (si "fallisce aperto").
-4. **Modalità prova** ("avrei bloccato X").
-5. **Limite di azioni** nel tempo: troppe azioni sono più probabilmente un bug che un attacco.
-6. **Interruttore generale** per spegnere ogni automatismo.
-7. **Se l'utente non risponde non succede nulla**: nessuna azione "per scadenza".
-8. **Conferme autenticate**: solo dalla console autenticata, altrimenti un attaccante userebbe Erinix contro l'utente.
-9. **Nessun comando costruito con dati esterni**: gli IP sono validati e passati come argomenti, mai in stringhe di shell.
-10. **Un solo punto di passaggio** (`guard.py`) tra regole e azioni: ogni azione futura eredita le protezioni.
+1. **Observe only by default**: response is enabled by explicit choice, never at first start. An `auto` rule is inert until response is enabled.
+2. **Untouchable list**: PID 1, Erinix itself, the administrator's session and its parents, their IP, localhost, critical services.
+3. **Expiring blocks**: if Erinix crashes nothing permanent is left behind (it "fails open").
+4. **Dry-run mode** ("I would have blocked X").
+5. **Action limit** over time: too many actions are more likely a bug than an attack.
+6. **Master switch** to turn off all automatic behavior.
+7. **If the user does not answer, nothing happens**: no action "on timeout".
+8. **Authenticated confirmations**: only from the authenticated console, otherwise an attacker would use Erinix against the user.
+9. **No command built from external data**: IPs are validated and passed as arguments, never in shell strings.
+10. **A single passage point** (`guard.py`) between rules and actions: every future action inherits the protections.
 
-## 11. Deception (honeyport)
+## 11. Deception (honeyports)
 
-Esche, non "falsi positivi": un utente legittimo non ha alcun motivo di toccare un servizio che non esiste, quindi chi lo fa è quasi certamente un attaccante.
+Decoys, not "false positives": a legitimate user has no reason to touch a service that does not exist, so whoever does is almost certainly an attacker.
 
-- **Ibrido**: eBPF rileva la scansione; un piccolo processo di Erinix risponde sulle porte esca con banner finti. Simulare un servizio intero in eBPF sarebbe un incubo.
-- **Le esche si mostrano solo all'IP che scansiona**, deviando le sue connessioni; gli utenti normali non vedono nulla.
-- **Non si banna sulla sola scansione**: in una scansione SYN l'IP sorgente si può falsificare e si farebbero bannare IP innocenti. Si banna **solo dopo una connessione completata** e un'interazione con l'esca.
-- **L'esca non diventa mai una porta d'ingresso**: banner, pochi byte letti, nessuna esecuzione, utente senza privilegi, processo isolato.
-- **Vulpnix riconosce le esche** (tramite il registro della suite) e le esclude dal rischio reale.
-- Da verificare prima delle gare: che le esche siano ammesse dal regolamento.
+- **Hybrid**: eBPF detects the scan; a small Erinix process answers on the decoy ports with fake banners. Simulating a whole service in eBPF would be a nightmare.
+- **Decoys are shown only to the scanning IP**, by redirecting its connections; normal users see nothing.
+- **No banning on the scan alone**: in a SYN scan the source IP can be forged and innocent IPs would get banned. Banning happens **only after a completed connection** and an interaction with the decoy.
+- **The decoy never becomes an entry point**: banner, a few bytes read, no execution, unprivileged user, isolated process.
+- **Vulpnix recognizes the decoys** (through the suite registry) and excludes them from the real risk.
+- To check before competitions: that decoys are allowed by the rules.
 
-## 12. Assessment dell'incidente e integrazione con Vulpnix
+## 12. Incident assessment and Vulpnix integration
 
-Dopo la risposta Erinix valuta l'accaduto: **ricostruzione** (cronologia, punto d'ingresso, fin dove è arrivato l'attaccante), **esito della risposta**, **verifica di persistenza** (utenti, chiavi SSH, cron, servizi lasciati dall'attaccante: fermare la shell non basta) e **mitigazioni** collegate ai passi della catena.
+After the response Erinix assesses what happened: **reconstruction** (timeline, entry point, how far the attacker got), **outcome of the response**, **persistence check** (users, SSH keys, cron jobs, services left behind by the attacker: stopping the shell is not enough) and **mitigations** linked to the steps of the chain.
 
-Il cerchio con Vulpnix: Vulpnix indica dove guardare, Erinix vede e ferma, le mitigazioni dell'incidente diventano ciò che Vulpnix controlla alla scansione successiva. Il report di Vulpnix letto da Erinix è **input da validare e verificare nella firma**, non verità assoluta.
+The loop with Vulpnix: Vulpnix says where to look, Erinix sees and stops, the mitigations from the incident become what Vulpnix checks at the next scan. The Vulpnix report read by Erinix is **input to validate and whose signature must be verified**, not absolute truth.
 
-## 13. Interfaccia: console e comandi
+## 13. Interface: console and commands
 
-Principio: l'agente (servizio con privilegi) non si avvia né si controlla dalla web app. Console e web sono due **client** della stessa API locale: chiudere uno dei due non spegne la protezione, e un client compromesso non ha i poteri dell'agente.
+Principle: the agent (a privileged service) is neither started nor controlled from the web app. Console and web are two **clients** of the same local API: closing either one does not switch protection off, and a compromised client does not have the agent's powers.
 
-- **`erinix` apre una console a schermo intero** (schermo alternativo, come Vulpnix): riquadro informativo e mascotte in alto, prompt `erinix ▸` subito sotto, barra di stato in basso. Gli stessi comandi funzionano da riga di comando (`erinix doctor`), per systemd, script e test. Un unico registro di comandi alimenta entrambe. `--plain` (o `TERM=dumb`) apre la console classica a righe.
-- **Tabella chiusa di comandi**: ogni comando è una voce con funzione, aiuto e uso. Niente esecuzione in shell, niente comandi costruiti da testo esterno.
-- **Zero dipendenze**: solo libreria standard (`termios`, `select`). I mattoni del terminale (tasti, mouse, selezione) partono dall'esperienza di Vulpnix, con alcune correzioni: decodifica UTF-8 incrementale (le lettere accentate non si spezzano), evidenziazione che conserva i colori, copia negli appunti con limite di dimensione.
-- **Output sanificato**: ogni testo che arriva da file o processi passa da `safe()`, e la console lascia passare verso il terminale solo testo e sequenze di colore: nessuna sequenza OSC (appunti, titolo), nessuno spostamento del cursore o cancellazione dello schermo può essere iniettata da un comando o da un processo ostile. Le larghezze si calcolano sul testo semplice.
-- **Incolla protetta** (bracketed paste): il testo incollato finisce nella riga e non esegue mai nulla; gli «a capo» diventano spazi e la lunghezza è limitata.
-- **Ridimensionamento**: tabelle e pannelli sono blocchi che si ridisegnano alla larghezza corrente (massimo 120 colonne, per leggibilità), anche quando il terminale si riallarga; le righe di testo restano intere e si tagliano solo in visualizzazione.
-- **Mouse**: rotella e PgUp/PgDn per scorrere; trascinare seleziona e copia negli appunti. Il terminale viene sempre ripristinato (schermo, mouse, cursore), anche in caso di errore o di segnale.
-- **Cronologia** in `~/.local/state/erinix/history` con permessi 0600: non si legge se non è dell'utente o se è accessibile ad altri, non si scrive attraverso un symlink. I comandi marcati `sensitive` non finiscono in cronologia.
-- **Colori**: informazioni ed evidenze in toni di riccio (marrone chiaro per le informazioni, marrone scuro per i bordi, arancio freddo per titoli e comandi); tutto il resto nel colore predefinito del terminale; rosso, verde e giallo riservati alle segnalazioni (gravità: `low` verde, `medium` giallo, `high` rosso, `critical` bianco su rosso). Supporto truecolor, 256 e 16 colori, oppure nessuno: si rispetta `NO_COLOR`, si può forzare con `ERINIX_COLOR=always|never` e disattivare per un comando con `--no-color`. Fallback ASCII se il terminale non è UTF-8.
-- **Web locale** (da costruire): `erinix ui` apre la pagina; ascolto solo su `127.0.0.1`; accesso con link monouso rilasciato dal servizio dopo aver verificato chi lo chiede tramite il kernel (root o gruppo `erinix`); controllo dell'header `Host` contro il DNS rebinding; protezione CSRF; approvazioni di blocco solo da sessioni autenticate.
+- **`erinix` opens a full-screen console** (alternate screen, like Vulpnix): information box and mascot at the top, `erinix ▸` prompt right below, status bar at the bottom. The same commands work from the command line (`erinix doctor`), for systemd, scripts and tests. A single command registry feeds both. `--plain` (or `TERM=dumb`) opens the classic line-based console.
+- **Closed table of commands**: every command is an entry with function, help and usage. No shell execution, no commands built from external text.
+- **Zero dependencies**: standard library only (`termios`, `select`). The terminal building blocks (keys, mouse, selection) start from Vulpnix's experience, with a few fixes: incremental UTF-8 decoding (accented letters are not split), highlighting that keeps the colors, clipboard copy with a size limit.
+- **Sanitized output**: every text coming from files or processes goes through `safe()`, and the console lets only text and color sequences through to the terminal: no OSC sequence (clipboard, title), no cursor movement or screen clearing can be injected by a command or a hostile process. Widths are computed on the plain text.
+- **Protected paste** (bracketed paste): pasted text goes into the line and never executes anything; line breaks become spaces and the length is limited.
+- **Resizing**: tables and panels are blocks that are redrawn at the current width (at most 120 columns, for readability), also when the terminal grows again; text lines stay whole and are only cut at display time.
+- **Mouse**: wheel and PgUp/PgDn to scroll; dragging selects and copies to the clipboard. The terminal is always restored (screen, mouse, cursor), even on errors or signals.
+- **History** in `~/.local/state/erinix/history` with 0600 permissions: it is not read unless it belongs to the user and is not accessible to others, and it is never written through a symlink. Commands marked `sensitive` do not end up in the history.
+- **Colors**: information and highlights in hedgehog tones (light brown for information, dark brown for borders, cold orange for titles and commands); everything else in the terminal's default color; red, green and yellow reserved for alerts (severity: `low` green, `medium` yellow, `high` red, `critical` white on red). Truecolor, 256 and 16 color support, or none: `NO_COLOR` is respected, it can be forced with `ERINIX_COLOR=always|never` and turned off for a single command with `--no-color`. ASCII fallback if the terminal is not UTF-8.
+- **Local web** (to be built): `erinix ui` opens the page; listening only on `127.0.0.1`; access through a one-time link issued by the service after checking, via the kernel, who is asking (root or group `erinix`); `Host` header check against DNS rebinding; CSRF protection; blocking approvals only from authenticated sessions.
 
-Comandi attuali: `help`, `version`, `doctor` (capacità della macchina e sensore previsto), `rules validate`, `rules list`, `replay` (attacchi simulati: `revshell`, `bruteforce`, `shadow`, `admin`).
+Current commands: `help`, `version`, `doctor` (machine capabilities and planned sensor), `rules validate`, `rules list`, `replay` (simulated attacks: `revshell`, `bruteforce`, `shadow`, `admin`).
 
-Comandi previsti: `start`, `stop`, `status`, `ui`, `watch`, `alerts`, `incident`, `response` (status, dry-run, enable, panic), `block` (list, release), `sensor` (status, switch).
+Planned commands: `start`, `stop`, `status`, `ui`, `watch`, `alerts`, `incident`, `response` (status, dry-run, enable, panic), `block` (list, release), `sensor` (status, switch).
 
-## 14. Console web e consegna
+## 14. Web console and delivery
 
-- Una **console unica di famiglia**, che mostra i moduli installati: solo Vulpnix, solo Erinix o entrambi (vista integrata).
-- **DB separati** per tool. La console non tocca i DB: li interroga tramite il canale locale di ciascun tool, in sola lettura e con il minimo indispensabile.
-- Esportazione dei report in HTML, Markdown e JSON.
-- La web app è anche **il bersaglio del VSPT** (vulnerability scanning e pen test) richiesto dalla consegna: sicurezza fin dal progetto (argon2, query parametrizzate, CSRF, header di sicurezza, limite ai login, escape di tutto l'input dai tool), riferimento OWASP Top 10, poi scansioni, test manuali, report e secondo test di verifica. Il laboratorio richiede HTTPS e autenticazione sull'interfaccia raggiungibile.
+- A single **family console**, which shows the installed modules: Vulpnix only, Erinix only, or both (integrated view).
+- **Separate DBs** per tool. The console does not touch the DBs: it queries each tool through its local channel, read-only and with the bare minimum.
+- Report export in HTML, Markdown and JSON.
+- The web app is also **the target of the VSPT** (vulnerability scanning and pen test) required by the assignment: secure by design (argon2, parameterized queries, CSRF, security headers, login rate limit, escaping of all input from the tools), OWASP Top 10 as the reference, then scans, manual tests, report and a second verification test. The lab requires HTTPS and authentication on the reachable interface.
 
-## 15. Rischi residui (da dichiarare nel report)
+## 15. Residual risks (to declare in the report)
 
-- La **console** vede entrambi i tool: è l'unico punto in cui si incontrano. Si riduce (sola lettura, utente proprio, niente accesso ai file), non si elimina.
-- Un attaccante che ottiene **root** può fermare Erinix: l'obiettivo è **accorgersene** (sensore fermato come allarme), non impedirlo.
-- Con eBPF il kernel può perdere eventi se il buffer si riempie: si contano e si dichiarano.
-- Ogni regola ha falsi positivi possibili; le regole `auto` sono poche, motivate e revisionabili.
+- The **console** sees both tools: it is the only place where they meet. It is reduced (read-only, its own user, no file access), not eliminated.
+- An attacker who gets **root** can stop Erinix: the goal is to **notice it** (stopped sensor as an alarm), not to prevent it.
+- With eBPF the kernel can lose events if the buffer fills up: they are counted and declared.
+- Every rule can produce false positives; `auto` rules are few, justified and reviewable.
 
-## 16. Piano di lavoro e date
+## 16. Work plan and dates
 
-- **6 novembre 2026**: sfida red team vs blue team (Raspberry). Erinix "da gara": sensore, poche catene solide, esche, risposta con scadenza e lista intoccabile, alert da terminale, nessuna console. Erinix è costruito per **qualsiasi Linux**, non su misura del Raspberry.
-- **19 novembre 2026**: consegna finale (tool di risk assessment e applicazione web, con VSPT). Console Nemirix, integrazione con Vulpnix, valutazione degli incidenti, report.
+- **November 6, 2026**: red team vs blue team challenge (Raspberry Pi). "Competition-ready" Erinix: sensor, a few solid chains, decoys, response with expiry and untouchable list, terminal alerts, no web console. Erinix is built for **any Linux**, not tailored to the Raspberry Pi.
+- **November 19, 2026**: final delivery (risk assessment tool and web application, with VSPT). Nemirix console, Vulpnix integration, incident assessment, report.
 
-Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto), motore di correlazione (fatto), console e comandi di base (fatto), guardia e risposta, bus a corsie, sensore eBPF, fallback auditd, esche, storage, console.
+Development order: event model and process tree (done), rules (done), correlation engine (done), basic console and commands (done), guard and response, lane-based bus, eBPF sensor, auditd fallback, decoys, storage, web console.
 
-## 17. Registro delle decisioni
+## 17. Decision log
 
-| Data | Decisione | Perché |
+| Date | Decision | Why |
 |---|---|---|
-| 2026-10-24 | Python + FastAPI + SQLite | Linguaggio padroneggiato, tempi stretti |
-| 2026-10-24 | eBPF principale, auditd fallback, minimale | Visibilità massima, nessuno resta senza protezione |
-| 2026-10-24 | eBPF con CO-RE (non bcc) | Nessun compilatore sulla macchina protetta, pratica moderna |
-| 2026-10-24 | Root come modalità principale, rootless come osservatore | Servono i privilegi per sensori e risposta |
-| 2026-10-24 | Risposta ibrida (auto solo a certezza assoluta, interattiva altrove) | Equilibrio tra tempestività ed errori |
-| 2026-10-24 | Nessun scarto silenzioso sotto flood; corsia riservata | "Non abbassare la guardia" |
-| 2026-10-24 | DB e utenti separati per tool; registro e firma della suite | Compartimentazione |
-| 2026-10-24 | Console unica che si adatta ai tool installati | Un solo bersaglio da mettere in sicurezza |
-| 2026-10-24 | Honeyport con ban solo dopo connessione completa | Lo spoofing dell'IP in scansione SYN farebbe bannare innocenti |
-| 2026-10-24 | Regole in **TOML**, zero dipendenze, nessuna regex, `auto` con giustificazione | Meno superficie d'attacco, niente ReDoS, automatismi revisionabili |
-| 2026-10-24 | Il file/cartella delle regole deve essere fidato (proprietario, permessi, no symlink) | Chi scrive le regole comanda il tool |
-| 2026-10-24 | `count` con finestra scorrevole; attacchi lenti coperti da regole a finestra lunga | Semplice, prevedibile, già usato da fail2ban |
-| 2026-10-24 | Motore: istanze limitate per regola, si sacrificano solo candidati non avanzati, con alert critico | Un flood non deve poter cancellare un attacco già in corso, né passare sotto silenzio |
-| 2026-10-24 | Console interattiva e riga di comando dallo stesso registro; agente separato, CLI e web come client | Chiudere l'interfaccia non deve spegnere la protezione; un client compromesso non ha i poteri dell'agente |
-| 2026-10-24 | Palette a toni di riccio per le informazioni, semaforo per le segnalazioni; `NO_COLOR` rispettato | Leggibilità e identità visiva coerente con la suite |
-| 2026-10-24 | Console a schermo intero con mascotte (riccio), riquadri a sezioni, mouse e copia; console classica come ripiego | Stessa esperienza di Vulpnix, senza dipendenze |
-| 2026-10-24 | L'output dei comandi è fatto di blocchi ridisegnabili, non di righe già impaginate | Riallargando il terminale le tabelle devono tornare grandi, non restare alla larghezza di quando sono state stampate |
-| 2026-10-24 | Interfaccia, messaggi, commenti e docstring in inglese, come Vulpnix | Suite coerente e presentabile alle aziende; questo documento resta in italiano perché è destinato al docente |
+| 2026-10-24 | Python + FastAPI + SQLite | Language I master, tight schedule |
+| 2026-10-24 | eBPF main, auditd fallback, minimal | Maximum visibility, nobody is left without protection |
+| 2026-10-24 | eBPF with CO-RE (not bcc) | No compiler on the protected machine, modern practice |
+| 2026-10-24 | Root as the main mode, rootless as observer | Privileges are needed for sensors and response |
+| 2026-10-24 | Hybrid response (auto only with absolute certainty, interactive elsewhere) | Balance between timeliness and mistakes |
+| 2026-10-24 | No silent drops under flood; reserved lane | "Never lower the guard" |
+| 2026-10-24 | Separate DBs and users per tool; suite registry and signing | Compartmentalization |
+| 2026-10-24 | Single console that adapts to the installed tools | One target to secure |
+| 2026-10-24 | Honeyports with ban only after a completed connection | IP spoofing in a SYN scan would get innocents banned |
+| 2026-10-24 | Rules in **TOML**, zero dependencies, no regex, `auto` with justification | Less attack surface, no ReDoS, reviewable automation |
+| 2026-10-24 | The rules file/folder must be trusted (owner, permissions, no symlinks) | Whoever writes the rules controls the tool |
+| 2026-10-24 | `count` with a sliding window; slow attacks covered by long-window rules | Simple, predictable, already used by fail2ban |
+| 2026-10-24 | Engine: bounded instances per rule, only non-advanced candidates are sacrificed, with a critical alert | A flood must not be able to erase an attack in progress, nor go unnoticed |
+| 2026-10-24 | Interactive console and command line from the same registry; separate agent, CLI and web as clients | Closing the interface must not switch protection off; a compromised client does not have the agent's powers |
+| 2026-10-24 | Hedgehog-tone palette for information, traffic light for alerts; `NO_COLOR` respected | Readability and a visual identity consistent with the suite |
+| 2026-10-24 | Full-screen console with hedgehog mascot, sectioned boxes, mouse and copy; classic console as fallback | Same experience as Vulpnix, with no dependencies |
+| 2026-10-24 | Command output is made of redrawable blocks, not pre-laid-out lines | When the terminal grows again, tables must grow back instead of staying at the width they were printed at |
+| 2026-10-24 | Interface, messages, comments, docstrings and documentation in English, like Vulpnix | A consistent suite that can be presented to companies |
 
-### Ancora da decidere o riconfermare
+### Still to decide or reconfirm
 
-- Scala di gravità condivisa con Vulpnix (qui: `low`, `medium`, `high`, `critical`; va allineata allo schema di Vulpnix).
-- Dati ostili: grezzi nel DB con escape in output (proposta adottata).
-- Strato di caricamento eBPF da Python (libreria esistente o piccolo componente in C).
-- Regolamento della sfida red vs blue (esche, blocchi IP, disponibilità dei servizi).
-- Colori della console: Vulpnix usa un arancio pieno, Erinix marroni e arancio freddo. Da confermare che la differenza di tinta sia voluta.
+- Severity scale shared with Vulpnix (here: `low`, `medium`, `high`, `critical`; it must be aligned with Vulpnix's schema).
+- Hostile data: stored raw in the DB with escaping on output (adopted proposal).
+- eBPF loading layer from Python (an existing library or a small C component).
+- Rules of the red vs blue challenge (decoys, IP blocks, service availability).
+- Console colors: Vulpnix uses a solid orange, Erinix browns and a cold orange. To confirm that the difference in hue is intentional.
