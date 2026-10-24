@@ -119,12 +119,29 @@ Scelte di sicurezza:
 6. **Corsia riservata**: gli eventi critici (exec, cambi di uid, rete, stato sensore) viaggiano su un canale con spazio proprio.
 7. **Albero dei processi a memoria limitata**: si sacrificano prima i processi terminati; se si perde un processo vivo lo si **conta e lo si dichiara**.
 8. **Il sensore deve segnalare quando è cieco**: avvio, modalità, eventi persi, sensore fermato.
+9. **Percorsi canonici dai sensori**: i percorsi dei file devono arrivare già risolti (niente `/etc/../etc/shadow`, niente symlink) e l'eseguibile deve essere quello visto dal kernel. Il motore confronta stringhe esatte e si fida del sensore su questo punto.
 
 ## 8. Correlazione e allarmi
 
-- **Un solo alert per catena in corso**, che si aggiorna. Niente notifiche multiple per lo stesso attacco.
-- **Gravità progressiva**: cresce con i passi completati. Si segnala già dal primo passo, perché conta la tempestività.
-- **La risposta si aggancia al passo**: per esempio "servizio che genera shell" seguito da "connessione esterna" è già una reverse shell confermata, e si interviene prima che l'attaccante cerchi la scalata.
+- **Un solo alert per catena in corso**, che si aggiorna (stesso `alert_id`, `revision` crescente). Niente notifiche multiple per lo stesso attacco.
+- **Gravità progressiva**: pari alla più alta tra i passi completati. Si segnala già dal primo passo, perché conta la tempestività.
+- **La risposta si aggancia al passo**: per esempio "servizio che genera shell" seguito da "connessione esterna" è già una reverse shell confermata, e si interviene prima che l'attaccante cerchi la scalata. L'alert riporta il livello di risposta del passo appena raggiunto.
+
+Come ragiona il motore (`engine/correlator.py`):
+
+- **Un'istanza per "storia"**, identificata dal legame della regola: la radice dell'albero di processi (`process_tree`), la sessione di login (`login_session`) o l'indirizzo remoto (`remote_ip`).
+- **I passi si completano in ordine.** Un solo evento completa al massimo un passo.
+- **Finestra scorrevole per `count`** (come fail2ban): per un passo con `count = 5` valgono 5 eventi qualsiasi caduti negli ultimi `window_seconds`. Scelta per semplicità e prevedibilità; gli attacchi lenti si coprono con una seconda regola a finestra lunga e soglia più alta, non complicando il motore.
+- **Dopo il primo passo** l'intera catena deve concludersi entro `window_seconds` dall'inizio; poi l'istanza scade e una nuova storia può ripartire.
+- **Albero dei processi aggiornato dal motore**: un processo con lo stesso PID ma un altro istante di avvio è un altro processo e non eredita la catena.
+- **Indicatori**: un alert per coppia (regola, processo); i duplicati vengono **contati** (`suppressed_duplicates`), non ignorati in silenzio.
+- **Confronti senza regex**: valori esatti, prefissi, liste. Un campo sconosciuto non corrisponde mai (fallisce chiuso). Un eseguibile sconosciuto non conta come "inatteso" (il sensore potrebbe semplicemente non vederlo).
+
+Memoria e sovraccarico del motore:
+
+- **Limite di istanze per regola.** Al limite si sacrificano **solo** i candidati che non hanno completato nessun passo (i più vecchi per primi); le catene già avanzate non si toccano mai. Se non c'è nulla da sacrificare, il nuovo candidato viene rifiutato.
+- **Ogni sacrificio o rifiuto è contato** e genera un alert critico `engine-overload` (al massimo uno al minuto): il flood è un segnale d'attacco, non un dettaglio tecnico.
+- Il rinvio su disco degli eventi in eccesso spetta al bus a corsie (sezione 9), non al motore.
 
 ## 9. Resistenza al sovraccarico
 
@@ -200,7 +217,7 @@ Il cerchio con Vulpnix: Vulpnix indica dove guardare, Erinix vede e ferma, le mi
 - **6 novembre 2026**: sfida red team vs blue team (Raspberry). Erinix "da gara": sensore, poche catene solide, esche, risposta con scadenza e lista intoccabile, alert da terminale, nessuna console. Erinix è costruito per **qualsiasi Linux**, non su misura del Raspberry.
 - **19 novembre 2026**: consegna finale (tool di risk assessment e applicazione web, con VSPT). Console Nemirix, integrazione con Vulpnix, valutazione degli incidenti, report.
 
-Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto), motore di correlazione, guardia e risposta, sensore eBPF, fallback auditd, esche, storage, console.
+Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto), motore di correlazione (fatto), guardia e risposta, bus a corsie, sensore eBPF, fallback auditd, esche, storage, console.
 
 ## 16. Registro delle decisioni
 
@@ -217,6 +234,8 @@ Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto)
 | 2026-10-24 | Honeyport con ban solo dopo connessione completa | Lo spoofing dell'IP in scansione SYN farebbe bannare innocenti |
 | 2026-10-24 | Regole in **TOML**, zero dipendenze, nessuna regex, `auto` con giustificazione | Meno superficie d'attacco, niente ReDoS, automatismi revisionabili |
 | 2026-10-24 | Il file/cartella delle regole deve essere fidato (proprietario, permessi, no symlink) | Chi scrive le regole comanda il tool |
+| 2026-10-24 | `count` con finestra scorrevole; attacchi lenti coperti da regole a finestra lunga | Semplice, prevedibile, già usato da fail2ban |
+| 2026-10-24 | Motore: istanze limitate per regola, si sacrificano solo candidati non avanzati, con alert critico | Un flood non deve poter cancellare un attacco già in corso, né passare sotto silenzio |
 
 ### Ancora da decidere o riconfermare
 
