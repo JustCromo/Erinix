@@ -1,12 +1,11 @@
-"""Tema colori di Erinix.
+"""Color theme of Erinix.
 
-Informazioni ed evidenziazioni in toni di riccio (marroni e arancio freddo);
-tutto il resto resta nel colore predefinito del terminale; rosso/verde/giallo
-sono riservati alle segnalazioni (semaforo), tarati per stare bene accanto ai
-marroni.
+Information and highlights in hedgehog tones (browns and a cold orange);
+everything else stays in the terminal's default color; red/green/yellow are
+reserved for alerts (traffic light), tuned to sit well next to the browns.
 
-Supporto ai terminali: truecolor, 256 colori, 16 colori, nessun colore.
-Si rispetta NO_COLOR; ERINIX_COLOR=always|never|auto forza la scelta.
+Terminal support: truecolor, 256 colors, 16 colors, no color.
+NO_COLOR is respected; ERINIX_COLOR=always|never|auto forces the choice.
 """
 
 from __future__ import annotations
@@ -16,17 +15,17 @@ import shutil
 import sys
 from typing import Mapping, TextIO
 
-# ruolo -> (RGB truecolor, indice a 256 colori, codice SGR a 16 colori)
+# role -> (truecolor RGB, 256-color index, 16-color SGR code)
 PALETTE: Mapping[str, tuple[tuple[int, int, int], int, int]] = {
-    "accent": ((226, 122, 63), 173, 33),    # arancio freddo: evidenze, titoli
-    "brown": ((176, 136, 102), 137, 33),    # marrone chiaro: informazioni
-    "border": ((124, 96, 74), 94, 90),      # marrone scuro: bordi, decorazioni
-    "dim": ((150, 138, 126), 245, 90),      # secondario
-    "ok": ((125, 170, 92), 107, 32),        # verde
-    "warn": ((227, 179, 65), 179, 93),      # giallo ambra
-    "bad": ((224, 86, 75), 167, 91),        # rosso
+    "accent": ((226, 122, 63), 173, 33),    # cold orange: highlights, titles
+    "brown": ((176, 136, 102), 137, 33),    # light brown: information
+    "border": ((124, 96, 74), 94, 90),      # dark brown: borders, decorations
+    "dim": ((150, 138, 126), 245, 90),      # secondary
+    "ok": ((125, 170, 92), 107, 32),        # green
+    "warn": ((227, 179, 65), 179, 93),      # amber yellow
+    "bad": ((224, 86, 75), 167, 91),        # red
 }
-# Gravità massima: bianco in grassetto su sfondo rosso.
+# Maximum severity: bold white on a red background.
 _CRIT = {3: "1;38;2;255;255;255;48;2;184;48;42", 2: "1;38;5;231;48;5;124", 1: "1;97;41"}
 
 MIN_WIDTH, MAX_WIDTH = 60, 120
@@ -42,7 +41,7 @@ _ASCII = {"tl": "+", "tr": "+", "bl": "+", "br": "+", "h": "-", "v": "|", "lt": 
 
 
 def rgb_to_256(rgb: tuple[int, int, int]) -> int:
-    """Colore più vicino nel cubo 6x6x6 della tavolozza a 256 colori."""
+    """Nearest color in the 6x6x6 cube of the 256-color palette."""
     def level(v: int) -> int:
         return 0 if v < 48 else 1 if v < 115 else min(5, (v - 35) // 40)
     r, g, b = rgb
@@ -50,7 +49,7 @@ def rgb_to_256(rgb: tuple[int, int, int]) -> int:
 
 
 def detect_color_level(stream: TextIO | None = None, env: Mapping[str, str] | None = None) -> int:
-    """0 = nessun colore, 1 = 16 colori, 2 = 256 colori, 3 = truecolor."""
+    """0 = no color, 1 = 16 colors, 2 = 256 colors, 3 = truecolor."""
     env = os.environ if env is None else env
     stream = sys.stdout if stream is None else stream
     pref = env.get("ERINIX_COLOR", "auto").lower()
@@ -126,9 +125,9 @@ class Theme:
 
     def paint(self, text: str, role: str | None = None, bold: bool = False, *,
               prompt: bool = False, fg=None, bg=None) -> str:
-        """Colora `text`. Con prompt=True protegge le sequenze per readline.
+        """Color `text`. With prompt=True the sequences are protected for readline.
 
-        fg/bg sono colori RGB liberi (solo 256 colori e truecolor): servono alla mascotte.
+        fg/bg are free RGB colors (256 colors and truecolor only): used by the mascot.
         """
         if self.color_level == 0 or not text:
             return text

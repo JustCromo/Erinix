@@ -14,13 +14,13 @@ def proc(**kw):
 
 def test_text_is_bounded_and_raw():
     t = Text.of("<script>" + "a" * 50, 10)
-    assert t.value == "<script>aa" and t.truncated  # nessun escape: dato grezzo
+    assert t.value == "<script>aa" and t.truncated  # no escaping: raw data
 
 
 def test_text_invalid_bytes_never_crash():
     t = Text.of(b"ok\xff\xfe", 100)
     assert t.value == "ok\\xff\\xfe"
-    t.value.encode("utf-8")  # sempre UTF-8 valido
+    t.value.encode("utf-8")  # always valid UTF-8
 
 
 def test_process_key_rejects_invalid_pid():
@@ -51,7 +51,7 @@ def test_event_requires_matching_payload():
         Event(EventType.PROCESS_EXEC, Source.EBPF, process=proc(),
               payload=SensorInfo.build(detail="x"))
     with pytest.raises(ValueError):
-        Event(EventType.PROCESS_EXEC, Source.EBPF)  # manca il processo
+        Event(EventType.PROCESS_EXEC, Source.EBPF)  # the process is missing
 
 
 def test_net_external_detection():

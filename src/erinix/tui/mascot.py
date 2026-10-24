@@ -1,9 +1,9 @@
-"""La mascotte di Erinix: un riccio in pixel art, disegnato con mezzi blocchi.
+"""The Erinix mascot: a pixel-art hedgehog drawn with half blocks.
 
-Ogni cella del terminale mostra due pixel (blocco superiore/inferiore), quindi
-una griglia di 32x22 pixel occupa 32 colonne per 11 righe. Il disegno è
-generato in modo deterministico (nessun file immagine). Servono almeno 256
-colori; altrimenti la schermata di benvenuto usa un ripiego testuale.
+Every terminal cell shows two pixels (upper/lower block), so a grid of 32x22
+pixels takes 32 columns by 11 rows. The drawing is generated deterministically
+(no image file). At least 256 colors are needed; otherwise the welcome screen
+uses a text fallback.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def pixels() -> list[list[RGB | None]]:
     grid: list[list[RGB | None]] = [[None] * WIDTH for _ in range(HEIGHT)]
     cx, cy, rx, ry = 17.5, 11.0, 13.6, 9.6
 
-    # Corpo di aculei: cupola con bordo seghettato e tratti diagonali che ricordano gli aculei.
+    # Spiny body: a dome with a jagged edge and diagonal strokes that suggest spines.
     for y in range(HEIGHT):
         for x in range(WIDTH):
             px, py = x + 0.5, y + 0.5
@@ -67,19 +67,19 @@ def pixels() -> list[list[RGB | None]]:
                 if cond(x + 0.5, y + 0.5):
                     grid[y][x] = color
 
-    # Zampette, muso e viso (sopra gli aculei).
+    # Paws, snout and face (on top of the spines).
     paint(lambda x, y: _in_ellipse(x, y, 13.0, 20.3, 2.7, 1.7), FACE_SHADE)
     paint(lambda x, y: _in_ellipse(x, y, 23.0, 20.3, 2.7, 1.7), FACE_SHADE)
     paint(lambda x, y: _in_ellipse(x, y, 7.4, 15.6, 7.0, 5.2), FACE)
     paint(lambda x, y: _in_ellipse(x, y, 3.0, 16.6, 3.4, 2.4), FACE)
     paint(lambda x, y: _in_ellipse(x, y, 9.0, 19.0, 4.2, 1.9), BELLY)
-    paint(lambda x, y: _in_ellipse(x, y, 9.5, 11.2, 2.0, 1.7), FACE_SHADE)   # orecchio
+    paint(lambda x, y: _in_ellipse(x, y, 9.5, 11.2, 2.0, 1.7), FACE_SHADE)   # ear
     for x, y in ((0, 16), (1, 16), (0, 17), (1, 17)):
         grid[y][x] = NOSE
     for x, y in ((6, 14), (7, 14), (6, 15), (7, 15)):
         grid[y][x] = EYE
     grid[14][6] = SHINE
-    # Foglia d'autunno sul dorso: un tocco di arancio freddo.
+    # Autumn leaf on the back: a touch of cold orange.
     for x, y, c in ((20, 3, LEAF), (21, 3, LEAF), (19, 4, LEAF), (20, 4, LEAF_VEIN), (21, 4, LEAF),
                     (22, 4, LEAF), (20, 5, LEAF), (21, 5, LEAF), (22, 5, LEAF), (23, 5, LEAF)):
         grid[y][x] = c
@@ -87,7 +87,7 @@ def pixels() -> list[list[RGB | None]]:
 
 
 def lines(theme: Theme) -> list[list[Seg]]:
-    """Righe di frammenti colorati (mezzi blocchi). Vuoto se il terminale non basta."""
+    """Lines of colored fragments (half blocks). Empty if the terminal is not capable enough."""
     if theme.color_level < 2 or not theme.unicode:
         return []
     grid = pixels()

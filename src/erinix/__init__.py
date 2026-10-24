@@ -1,3 +1,3 @@
-"""Erinix - host-based IDS della suite Nemirix."""
+"""Erinix - host-based IDS of the Nemirix suite."""
 
 __version__ = "0.1.0"

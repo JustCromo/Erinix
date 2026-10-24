@@ -1,23 +1,23 @@
-"""Motore di correlazione: fa avanzare le catene a ogni evento.
+"""Correlation engine: advances the chains with every event.
 
-Come funziona
-- Ogni catena ha una ISTANZA per "storia": per il legame process_tree è la
-  radice (il processo che ha soddisfatto il primo passo); per login_session
-  la sessione; per remote_ip l'indirizzo.
-- I passi vanno completati IN ORDINE. Un passo con `count` N richiede N
-  eventi dentro una FINESTRA SCORREVOLE di `window_seconds` (come fail2ban).
-- Dopo il primo passo l'intera catena deve concludersi entro `window_seconds`
-  dall'inizio, altrimenti l'istanza scade e una nuova storia può ripartire.
-- Un alert per catena: si aggiorna (stesso alert_id, revision crescente) a
-  ogni passo completato, con gravità = massima tra i passi completati.
+How it works
+- Each chain has one INSTANCE per "story": for the process_tree link it is the
+  root (the process that satisfied the first step); for login_session the
+  session; for remote_ip the address.
+- Steps must be completed IN ORDER. A step with `count` N needs N events inside
+  a SLIDING WINDOW of `window_seconds` (like fail2ban).
+- After the first step the whole chain must finish within `window_seconds` of
+  its start, otherwise the instance expires and a new story can begin.
+- One alert per chain: it is updated (same alert_id, growing revision) at every
+  completed step, with severity = the highest among the completed steps.
 
-Affidabilità (nessun scarto silenzioso)
-- Memoria limitata per regola. Al limite si sacrificano SOLO i candidati che
-  non hanno ancora completato nessun passo, i più vecchi per primi; le catene
-  già avanzate non vengono mai toccate. Se non c'è nulla da sacrificare, il
-  nuovo candidato viene rifiutato.
-- Ogni sacrificio o rifiuto è CONTATO (Stats) e genera un alert critico
-  "engine-overload" (al massimo uno al minuto): il flood è un segnale d'attacco.
+Reliability (no silent drops)
+- Memory is bounded per rule. At the limit, ONLY candidates that have not yet
+  completed any step are sacrificed, oldest first; chains that already advanced
+  are never touched. If there is nothing to sacrifice, the new candidate is
+  refused.
+- Every sacrifice or refusal is COUNTED (Stats) and raises a critical
+  "engine-overload" alert (at most one per minute): a flood is an attack signal.
 """
 
 from __future__ import annotations
@@ -65,15 +65,15 @@ class _Instance:
         self.hits: deque[tuple[int, str]] = deque()
         self.start_mono = start_mono
         self.evidence: list[tuple[str, tuple[str, ...]]] = []
-        self.remote = None   # ultimo indirizzo remoto visto: resta nell'alert anche ai passi successivi
+        self.remote = None   # last remote address seen: stays in the alert at later steps too
 
 
 class Correlator:
     def __init__(self, rules: RuleSet, tree: ProcessTree | None = None, *,
                  max_per_rule: int = DEFAULT_MAX_PER_RULE) -> None:
         if max_per_rule < 1:
-            raise ValueError("max_per_rule deve essere >= 1")
-        # Attenzione: ProcessTree vuoto è "falso" (ha __len__), quindi niente `tree or ...`.
+            raise ValueError("max_per_rule must be >= 1")
+        # Careful: an empty ProcessTree is "falsy" (it has __len__), so no `tree or ...`.
         self.tree = tree if tree is not None else ProcessTree()
         self.stats = Stats()
         self._max = max_per_rule
@@ -91,7 +91,7 @@ class Correlator:
         self._last_sweep = 0
         self._last_overload: int | None = None
 
-    # ------------------------------------------------------------ ingresso
+    # ------------------------------------------------------------ entry point
     def process(self, event: Event) -> list[Alert]:
         self.stats.events_seen += 1
         self._learn(event)
@@ -111,7 +111,7 @@ class Correlator:
     def open_instances(self) -> int:
         return len(self._instances)
 
-    # ----------------------------------------------------------- interni
+    # ----------------------------------------------------------- internals
     def _learn(self, event: Event) -> None:
         p = event.process
         if p is None:
@@ -121,7 +121,7 @@ class Correlator:
         elif event.type is EventType.PROCESS_EXIT:
             self.tree.on_exit(p.key, event.mono_ns)
         elif p.key not in self.tree:
-            self.tree.on_exec(p)  # processo nato prima di noi: lo impariamo
+            self.tree.on_exec(p)  # process started before us: we learn it
 
     def _sweep(self, now: int) -> None:
         if now - self._last_sweep < SWEEP_INTERVAL_NS:
@@ -156,7 +156,7 @@ class Correlator:
             return None
         if chain.link is Link.LOGIN_SESSION:
             return event.process.loginuid
-        return event.process.key  # process_tree: radice candidata
+        return event.process.key  # process_tree: candidate root
 
     def _find(self, chain: Chain, event: Event) -> _Instance | None:
         if chain.link is Link.PROCESS_TREE:
@@ -233,7 +233,7 @@ class Correlator:
         inst.reached += 1
         inst.hits.clear()
         if inst.reached == 1:
-            self._candidates[chain.id].pop(inst.key, None)  # avanzata: protetta dallo sgombero
+            self._candidates[chain.id].pop(inst.key, None)  # advanced: protected from eviction
         inst.revision += 1
         return [self._chain_alert(inst, step.id, event)]
 

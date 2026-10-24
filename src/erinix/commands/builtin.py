@@ -1,4 +1,4 @@
-"""Comandi disponibili oggi: help, version, doctor, rules, replay."""
+"""Commands available today: help, version, doctor, rules, replay."""
 
 from __future__ import annotations
 
@@ -16,13 +16,13 @@ from erinix.ui.render import Seg, safe
 from erinix.ui.views import alert_panel, describe_event, response_seg, severity_badge
 
 DEFAULT_RULES_DIR = "/etc/erinix/rules"
-MODE_NAMES = {"ebpf": "eBPF (CO-RE)", "auditd": "auditd", "minimal": "minimale"}
+MODE_NAMES = {"ebpf": "eBPF (CO-RE)", "auditd": "auditd", "minimal": "minimal"}
 _RESPONSE_RANK = {Response.REPORT_ONLY: 0, Response.INTERACTIVE: 1, Response.AUTO: 2}
-GROUP_ORDER = ("Generale", "Diagnosi", "Regole", "Prove")
+GROUP_ORDER = ("General", "Diagnostics", "Rules", "Demo")
 COMING_SOON = "start · stop · status · ui · watch · alerts · incident · response · block · sensor"
 
 
-# ------------------------------------------------------------------ utilità
+# ------------------------------------------------------------------ helpers
 def _mark(ctx: Context, kind: str) -> Seg:
     role = {"ok": "ok", "warn": "warn", "bad": "bad"}[kind]
     return Seg(ctx.theme.glyph(kind), role, True)
@@ -42,34 +42,38 @@ def _print_problems(ctx: Context, ruleset: RuleSet) -> None:
         ctx.line(_mark(ctx, "bad"), Seg(" "), Seg(f"[{p.file}]", "brown"), Seg(who, "accent"), Seg(" " + p.message))
 
 
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" + ("" if n == 1 else "s")
+
+
 def _summary(ctx: Context, ruleset: RuleSet) -> None:
     n = len(ruleset.problems)
     ctx.line(_mark(ctx, "ok" if n == 0 else "bad"),
-             Seg(f" {len(ruleset.chains)} catene, {len(ruleset.indicators)} indicatori, {n} problemi",
+             Seg(f" {_count(len(ruleset.chains), 'chain')}, {_count(len(ruleset.indicators), 'indicator')}, {_count(n, 'problem')}",
                  "ok" if n == 0 else "bad", True))
 
 
 def default_rules_path(explicit: str | None = None) -> str:
-    """Percorso delle regole: quello esplicito, /etc/erinix/rules, o (solo da repository) ./rules."""
+    """Rules path: the explicit one, /etc/erinix/rules, or (repository checkouts only) ./rules."""
     if explicit:
         return explicit
     if os.path.isdir(DEFAULT_RULES_DIR):
         return DEFAULT_RULES_DIR
-    checkout = Path(__file__).resolve().parents[3] / "rules"   # solo per sviluppo da repository
+    checkout = Path(__file__).resolve().parents[3] / "rules"   # for development from a repository only
     return str(checkout) if checkout.is_dir() else DEFAULT_RULES_DIR
 
 
-# ----------------------------------------------------------------- comandi
+# ----------------------------------------------------------------- commands
 def make_help(registry: Registry):
     def cmd_help(ctx: Context, args: list[str]) -> int:
         if args:
             found = registry.resolve(args)
             if found is None:
-                ctx.error(f"comando sconosciuto: {safe(' '.join(args))}")
+                ctx.error(f"unknown command: {safe(' '.join(args))}")
                 return 2
             cmd = found[0]
-            ctx.line(Seg("uso      ", "brown"), Seg(cmd.usage, "accent", True))
-            ctx.line(Seg("cosa fa  ", "brown"), Seg(cmd.summary))
+            ctx.line(Seg("usage    ", "brown"), Seg(cmd.usage, "accent", True))
+            ctx.line(Seg("summary  ", "brown"), Seg(cmd.summary))
             return 0
         rows: list[list] = []
         for group in GROUP_ORDER:
@@ -78,11 +82,11 @@ def make_help(registry: Registry):
                 continue
             rows.append([Seg(group.upper(), "brown", True), ""])
             rows += [[Seg(c.usage, "accent"), c.summary] for c in members]
-        ctx.table(["Comando", "Cosa fa"], rows)
-        ctx.line(Seg("In console scrivi i comandi senza 'erinix' davanti. Esci con ", "dim"),
-                 Seg("exit", "accent"), Seg(" o Ctrl-D; ripulisci con ", "dim"), Seg("clear", "accent"),
-                 Seg(" o Ctrl-L.", "dim"))
-        ctx.line(Seg("In arrivo: ", "dim"), Seg(COMING_SOON, "dim"))
+        ctx.table(["Command", "What it does"], rows)
+        ctx.line(Seg("In the console, type commands without 'erinix' in front. Exit with ", "dim"),
+                 Seg("exit", "accent"), Seg(" or Ctrl-D; clear with ", "dim"), Seg("clear", "accent"),
+                 Seg(" or Ctrl-L.", "dim"))
+        ctx.line(Seg("Coming soon: ", "dim"), Seg(COMING_SOON, "dim"))
         return 0
     return cmd_help
 
@@ -104,37 +108,37 @@ def cmd_doctor(ctx: Context, args: list[str]) -> int:
 
     root = caps.euid == 0
     kernel_detail = caps.kernel_release if caps.kernel_ok_for_ebpf else \
-        f"{caps.kernel_release} (per eBPF serve almeno {selector.MIN_EBPF_KERNEL[0]}.{selector.MIN_EBPF_KERNEL[1]})"
+        f"{caps.kernel_release} (eBPF needs at least {selector.MIN_EBPF_KERNEL[0]}.{selector.MIN_EBPF_KERNEL[1]})"
     if caps.auditd_running:
-        audit = res("ok", "attivo")
+        audit = res("ok", "running")
     elif caps.auditd_installed:
-        audit = res("warn", "installato, non attivo")
+        audit = res("warn", "installed, not running")
     else:
-        audit = res("warn", "non installato")
+        audit = res("warn", "not installed")
     rules_path = default_rules_path(opts.get("--rules"))
     try:
         rs = load_rules(rules_path)
         n = len(rs.chains) + len(rs.indicators)
-        rules_cell = res("ok", f"{n} regole") if not rs.problems else res("warn", f"{n} regole, {len(rs.problems)} problemi")
+        rules_cell = res("ok", _count(n, "rule")) if not rs.problems else res("warn", f"{_count(n, 'rule')}, {_count(len(rs.problems), 'problem')}")
     except RuleError as exc:
-        rules_cell = res("warn", "non caricabili")
-        rules_path = str(exc)       # il messaggio contiene già il percorso
+        rules_cell = res("warn", "cannot load")
+        rules_path = str(exc)       # the message already contains the path
     rows = [
-        ["Privilegi", res("ok", "root") if root else res("warn", "utente"),
-         f"euid {caps.euid}" + ("" if root else " · senza root Erinix è solo osservatore")],
-        ["Kernel", res("ok" if caps.kernel_ok_for_ebpf else "warn", "ok" if caps.kernel_ok_for_ebpf else "vecchio"), kernel_detail],
-        ["BTF", res("ok", "presente") if caps.btf else res("warn", "assente"), "necessario per eBPF CO-RE"],
-        ["auditd", audit, "sensore di ripiego"],
-        ["Regole", rules_cell, rules_path],
+        ["Privileges", res("ok", "root") if root else res("warn", "user"),
+         f"euid {caps.euid}" + ("" if root else " · without root Erinix can only observe")],
+        ["Kernel", res("ok" if caps.kernel_ok_for_ebpf else "warn", "ok" if caps.kernel_ok_for_ebpf else "old"), kernel_detail],
+        ["BTF", res("ok", "present") if caps.btf else res("warn", "missing"), "required for eBPF CO-RE"],
+        ["auditd", audit, "fallback sensor"],
+        ["Rules", rules_cell, rules_path],
     ]
-    ctx.table(["Controllo", "Esito", "Dettaglio"], rows)
+    ctx.table(["Check", "Result", "Detail"], rows)
     ctx.say()
     label = 26
     mode = MODE_NAMES[plan.mode.value]
-    ctx.line(Seg("Sensore in uso ora".ljust(label), "brown"), Seg(mode, "accent", True),
+    ctx.line(Seg("Sensor in use now".ljust(label), "brown"), Seg(mode, "accent", True),
              Seg("  (rootless)" if plan.rootless else "", "dim"))
-    ctx.line(Seg("Con privilegi di root".ljust(label), "brown"), Seg(MODE_NAMES[plan.potential.value], "accent", True))
-    ctx.line(Seg("Motivo".ljust(label), "brown"), Seg(plan.reason))
+    ctx.line(Seg("With root privileges".ljust(label), "brown"), Seg(MODE_NAMES[plan.potential.value], "accent", True))
+    ctx.line(Seg("Reason".ljust(label), "brown"), Seg(plan.reason))
     return 0
 
 
@@ -144,7 +148,7 @@ def cmd_rules_validate(ctx: Context, args: list[str]) -> int:
     ruleset = _load(ctx, path)
     if ruleset is None:
         return 2
-    ctx.line(Seg("regole ", "brown"), Seg(path, "dim"))
+    ctx.line(Seg("rules ", "brown"), Seg(path, "dim"))
     _print_problems(ctx, ruleset)
     _summary(ctx, ruleset)
     return 1 if ruleset.problems else 0
@@ -156,18 +160,18 @@ def cmd_rules_list(ctx: Context, args: list[str]) -> int:
     ruleset = _load(ctx, path)
     if ruleset is None:
         return 2
-    ctx.line(Seg("regole ", "brown"), Seg(path, "dim"))
+    ctx.line(Seg("rules ", "brown"), Seg(path, "dim"))
     rows = []
     for c in ruleset.chains:
         top = max((s.severity for s in c.steps), key=lambda s: s.rank)
         resp = max((s.response for s in c.steps), key=_RESPONSE_RANK.get)
-        rows.append([Seg(c.id, "accent"), "catena", str(len(c.steps)), f"{c.window_seconds}s",
+        rows.append([Seg(c.id, "accent"), "chain", str(len(c.steps)), f"{c.window_seconds}s",
                      c.link.value, severity_badge(top), response_seg(resp)])
     for i in ruleset.indicators:
-        rows.append([Seg(i.id, "accent"), "indicatore", "1", "-", "-",
+        rows.append([Seg(i.id, "accent"), "indicator", "1", "-", "-",
                      severity_badge(i.severity), response_seg(i.response)])
     if rows:
-        ctx.table(["Regola", "Tipo", "Passi", "Finestra", "Legame", "Gravità", "Risposta"], rows)
+        ctx.table(["Rule", "Type", "Steps", "Window", "Link", "Severity", "Response"], rows)
     _print_problems(ctx, ruleset)
     _summary(ctx, ruleset)
     return 1 if ruleset.problems else 0
@@ -178,7 +182,7 @@ def cmd_replay(ctx: Context, args: list[str]) -> int:
     name = pos[0] if pos else "revshell"
     scenario = SCENARIOS.get(name)
     if scenario is None:
-        raise UsageError(f"scenario sconosciuto: {safe(name)} (disponibili: {', '.join(SCENARIOS)})")
+        raise UsageError(f"unknown scenario: {safe(name)} (available: {', '.join(SCENARIOS)})")
     ruleset = _load(ctx, default_rules_path(opts.get("--rules")))
     if ruleset is None:
         return 2
@@ -204,7 +208,7 @@ def cmd_replay(ctx: Context, args: list[str]) -> int:
                 final[alert.alert_id] = alert
     except KeyboardInterrupt:
         ctx.say()
-        ctx.error("interrotto")
+        ctx.error("interrupted")
         return 130
 
     ctx.say()
@@ -213,28 +217,28 @@ def cmd_replay(ctx: Context, args: list[str]) -> int:
         rows = [[Seg(a.rule_id, "accent"), severity_badge(a.severity),
                  f"{a.steps_done}/{a.steps_total}" if a.kind == "chain" else "-",
                  response_seg(a.response), str(a.remote_addr or "-")] for a in final.values()]
-        ctx.table(["Alert", "Gravità", "Passi", "Risposta", "Remoto"], rows)
+        ctx.table(["Alert", "Severity", "Steps", "Response", "Remote"], rows)
     elif not scenario.expect_alerts:
-        ctx.line(_mark(ctx, "ok"), Seg(" Nessun alert: attività normale riconosciuta come tale", "ok", True))
+        ctx.line(_mark(ctx, "ok"), Seg(" No alerts: normal activity recognized as such", "ok", True))
     else:
-        ctx.line(_mark(ctx, "bad"), Seg(" Attesi degli alert ma non ne è scattato nessuno", "bad", True))
-    ctx.line(Seg(f"eventi {stats.events_seen} · alert {stats.alerts_emitted} · "
-                 f"duplicati contati {stats.suppressed_duplicates}", "dim"))
+        ctx.line(_mark(ctx, "bad"), Seg(" Alerts were expected but none fired", "bad", True))
+    ctx.line(Seg(f"events {stats.events_seen} · alerts {stats.alerts_emitted} · "
+                 f"duplicates counted {stats.suppressed_duplicates}", "dim"))
     return 0 if bool(final) == scenario.expect_alerts else 1
 
 
-# ----------------------------------------------------------------- registro
+# ----------------------------------------------------------------- registry
 def build_registry() -> Registry:
     reg = Registry()
-    reg.add(Command("help", "Elenco dei comandi", "help [comando]", "Generale", make_help(reg)))
-    reg.add(Command("version", "Mostra la versione", "version", "Generale", cmd_version))
-    reg.add(Command("doctor", "Controlla cosa può usare Erinix qui",
-                    "doctor [--rules PERCORSO]", "Diagnosi", cmd_doctor, arg_words=("--rules",)))
-    reg.add(Command("rules validate", "Valida un file o una cartella di regole",
-                    "rules validate [percorso]", "Regole", cmd_rules_validate))
-    reg.add(Command("rules list", "Elenca le regole caricate",
-                    "rules list [percorso]", "Regole", cmd_rules_list))
-    reg.add(Command("replay", "Rigioca un attacco simulato e mostra gli alert",
-                    "replay [scenario] [--fast] [--rules PERCORSO]", "Prove", cmd_replay,
+    reg.add(Command("help", "List the commands", "help [command]", "General", make_help(reg)))
+    reg.add(Command("version", "Show the version", "version", "General", cmd_version))
+    reg.add(Command("doctor", "Check what Erinix can use on this machine",
+                    "doctor [--rules PATH]", "Diagnostics", cmd_doctor, arg_words=("--rules",)))
+    reg.add(Command("rules validate", "Validate a rules file or folder",
+                    "rules validate [path]", "Rules", cmd_rules_validate))
+    reg.add(Command("rules list", "List the loaded rules",
+                    "rules list [path]", "Rules", cmd_rules_list))
+    reg.add(Command("replay", "Replay a simulated attack and show the alerts",
+                    "replay [scenario] [--fast] [--rules PATH]", "Demo", cmd_replay,
                     arg_words=tuple(SCENARIOS) + ("--fast", "--rules")))
     return reg

@@ -1,11 +1,11 @@
-"""Modello evento comune di Erinix.
+"""Common event model of Erinix.
 
-Ogni sensore (eBPF, auditd, minimale) produce eventi in questo formato:
-il motore di correlazione non sa, e non deve sapere, da dove arrivano.
+Every sensor (eBPF, auditd, minimal) produces events in this format: the
+correlation engine does not know, and must not need to know, where they come from.
 
-Sicurezza: ogni campo testuale arriva da processi potenzialmente ostili.
-Qui viene solo limitato in lunghezza e conservato GREZZO, per mantenere
-le prove intatte. L'escape avviene esclusivamente quando si mostra.
+Security: every text field comes from potentially hostile processes. Here it is
+only length-limited and kept RAW, so the evidence stays intact. Escaping happens
+only when the text is displayed.
 """
 
 from __future__ import annotations
@@ -18,19 +18,19 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Union
 
-# Limiti per i dati non fidati.
+# Limits for untrusted data.
 MAX_PATH = 4096
 MAX_ARG = 4096
 MAX_ARGS = 64
-MAX_COMM = 16  # TASK_COMM_LEN del kernel (15 caratteri visibili)
+MAX_COMM = 16  # kernel TASK_COMM_LEN (15 visible characters)
 MAX_SHORT = 256
 
-# Valore che il kernel usa per "loginuid non impostato" (processi nati da servizi).
+# Value the kernel uses for "loginuid not set" (processes started by services).
 AUDIT_UID_UNSET = 4294967295
 
 
 class Source(str, Enum):
-    """Sensore che ha prodotto l'evento: indica quanto fidarsi del dato."""
+    """Sensor that produced the event: tells how much to trust the data."""
 
     EBPF = "ebpf"
     AUDITD = "auditd"
@@ -57,8 +57,8 @@ class EventType(str, Enum):
         return self.value.split(".", 1)[0]
 
 
-# Eventi che viaggiano sulla corsia riservata: un flood di eventi banali
-# non può mai rubare spazio a questi.
+# Events that travel on the reserved lane: a flood of trivial events
+# can never steal space from these.
 CRITICAL_TYPES = frozenset(
     {
         EventType.PROCESS_EXEC,
@@ -76,7 +76,7 @@ CRITICAL_TYPES = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class Text:
-    """Stringa non fidata, limitata in lunghezza ma conservata grezza."""
+    """Untrusted string: length-limited but kept raw."""
 
     value: str
     truncated: bool = False
@@ -86,8 +86,8 @@ class Text:
         if raw is None:
             return cls("")
         if isinstance(raw, bytes):
-            # backslashreplace: nessun byte viene perso o inventato,
-            # e il risultato è sempre UTF-8 valido (sicuro per DB e JSON).
+            # backslashreplace: no byte is lost or invented,
+            # and the result is always valid UTF-8 (safe for DB and JSON).
             raw = raw[: limit * 4].decode("utf-8", errors="backslashreplace")
         if len(raw) > limit:
             return cls(raw[:limit], True)
@@ -99,16 +99,16 @@ class Text:
 
 @dataclass(frozen=True, slots=True, order=True)
 class ProcessKey:
-    """Identità univoca di un processo: il PID da solo viene riciclato."""
+    """Unique identity of a process: the PID alone gets recycled."""
 
     pid: int
     start_ns: int
 
     def __post_init__(self) -> None:
         if self.pid <= 0:
-            raise ValueError(f"pid non valido: {self.pid}")
+            raise ValueError(f"invalid pid: {self.pid}")
         if self.start_ns < 0:
-            raise ValueError(f"start_ns non valido: {self.start_ns}")
+            raise ValueError(f"invalid start_ns: {self.start_ns}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +144,7 @@ class ProcessInfo:
         if loginuid == AUDIT_UID_UNSET:
             loginuid = None
         if uid < 0 or euid < 0:
-            raise ValueError("uid/euid negativi")
+            raise ValueError("negative uid/euid")
         args = tuple(Text.of(a, MAX_ARG) for a in argv[:MAX_ARGS])
         return cls(
             key=ProcessKey(pid, start_ns),
@@ -160,15 +160,15 @@ class ProcessInfo:
 
     @property
     def from_login_session(self) -> bool:
-        """True se il processo discende da un login (SSH, console), non da un servizio."""
+        """True if the process descends from a login (SSH, console), not from a service."""
         return self.loginuid is not None
 
     @property
     def name_mismatch(self) -> bool:
-        """Il nome dichiarato non corrisponde all'eseguibile visto dal kernel.
+        """The declared name does not match the executable seen by the kernel.
 
-        Segnale DEBOLE: è normale per script e interpreti (comm = nome dello
-        script, exe = /usr/bin/python3). Va sempre contestualizzato dal motore.
+        WEAK signal: it is normal for scripts and interpreters (comm = script
+        name, exe = /usr/bin/python3). The engine must always put it in context.
         """
         if not self.exe.value or not self.comm.value:
             return False
@@ -183,7 +183,7 @@ def _port(value: int | None) -> int | None:
     if value is None:
         return None
     if not 0 <= value <= 65535:
-        raise ValueError(f"porta non valida: {value}")
+        raise ValueError(f"invalid port: {value}")
     return value
 
 
@@ -198,12 +198,12 @@ class NetInfo:
     @classmethod
     def build(cls, *, protocol: str, local_addr=None, local_port=None, remote_addr=None, remote_port=None) -> "NetInfo":
         if protocol not in ("tcp", "udp"):
-            raise ValueError(f"protocollo non supportato: {protocol!r}")
+            raise ValueError(f"unsupported protocol: {protocol!r}")
         return cls(protocol, _ip(local_addr), _port(local_port), _ip(remote_addr), _port(remote_port))
 
     @property
     def remote_is_external(self) -> bool:
-        """True se il peer non è loopback né link-local."""
+        """True if the peer is neither loopback nor link-local."""
         r = self.remote_addr
         return r is not None and not (r.is_loopback or r.is_link_local or r.is_unspecified)
 
@@ -214,7 +214,7 @@ class PrivInfo:
     new_uid: int
     old_euid: int
     new_euid: int
-    method: Text  # es. "setuid", "sudo", "suid-exec"
+    method: Text  # e.g. "setuid", "sudo", "suid-exec"
 
     @property
     def became_root(self) -> bool:
@@ -232,7 +232,7 @@ class FileInfo:
     @classmethod
     def build(cls, *, path: str | bytes, operation: str) -> "FileInfo":
         if operation not in FILE_OPERATIONS:
-            raise ValueError(f"operazione non valida: {operation!r}")
+            raise ValueError(f"invalid operation: {operation!r}")
         return cls(Text.of(path, MAX_PATH), operation)
 
 
@@ -256,7 +256,7 @@ class SensorInfo:
     @classmethod
     def build(cls, *, mode: Source | None = None, detail: str = "", lost: int = 0) -> "SensorInfo":
         if lost < 0:
-            raise ValueError("lost negativo")
+            raise ValueError("negative lost count")
         return cls(mode, Text.of(detail, MAX_SHORT), lost)
 
 
@@ -281,8 +281,8 @@ class Event:
     process: ProcessInfo | None = None
     payload: Payload | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    # Due orologi: il monotono ordina senza farsi ingannare da cambi d'ora,
-    # quello reale serve solo per mostrare.
+    # Two clocks: the monotonic one orders events without being fooled by clock
+    # changes; the wall-clock one is only used for display.
     mono_ns: int = field(default_factory=time.monotonic_ns)
     wall_ns: int = field(default_factory=time.time_ns)
 
@@ -291,11 +291,11 @@ class Event:
         expected = _PAYLOAD_BY_FAMILY[family]
         if expected is None:
             if self.payload is not None:
-                raise ValueError(f"{self.type.value} non accetta payload")
+                raise ValueError(f"{self.type.value} does not accept a payload")
         elif not isinstance(self.payload, expected):
-            raise ValueError(f"{self.type.value} richiede payload {expected.__name__}")
+            raise ValueError(f"{self.type.value} requires a {expected.__name__} payload")
         if family in _PROCESS_REQUIRED and self.process is None:
-            raise ValueError(f"{self.type.value} richiede il contesto del processo")
+            raise ValueError(f"{self.type.value} requires the process context")
 
     @property
     def is_critical(self) -> bool:

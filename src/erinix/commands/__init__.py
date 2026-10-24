@@ -1,1 +1,1 @@
-"""Comandi di Erinix: un unico registro usato da console e riga di comando."""
+"""Commands of Erinix: a single registry used by the console and the command line."""

@@ -1,4 +1,4 @@
-"""Editor della riga di comando: testo, cursore e cronologia (senza I/O)."""
+"""Command-line editor: text, cursor and history (no I/O)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ class LineEditor:
         self._nav: int | None = None
         self._draft = ""
 
-    # -------------------------------------------------------------- modifica
+    # -------------------------------------------------------------- editing
     def insert(self, chunk: str) -> None:
         clean = "".join(c for c in chunk if c.isprintable())[: MAX_LEN - len(self.text)]
         if not clean:
@@ -46,7 +46,7 @@ class LineEditor:
         self.cursor = start
         self._nav = None
 
-    # ------------------------------------------------------------- movimenti
+    # ------------------------------------------------------------- movement
     def left(self) -> None:
         self.cursor = max(0, self.cursor - 1)
 
@@ -78,7 +78,7 @@ class LineEditor:
             i += 1
         self.cursor = i
 
-    # ------------------------------------------------------------ cronologia
+    # ------------------------------------------------------------ history
     def history_prev(self) -> None:
         if not self.history:
             return
@@ -110,6 +110,6 @@ class LineEditor:
         return line
 
     def forget_last(self, line: str) -> None:
-        """Toglie dalla cronologia una riga (comandi sensibili)."""
+        """Remove a line from the history (sensitive commands)."""
         if self.history and self.history[-1] == line:
             self.history.pop()

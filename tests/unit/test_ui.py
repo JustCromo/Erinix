@@ -42,7 +42,7 @@ def test_display_width_wide_and_combining():
 
 def test_table_fits_width_and_truncates():
     t = Theme(0, True, width=50)
-    out = table(t, ["Regola", "Dettaglio"], [["x" * 80, "y" * 80], ["corta", "ok"]])
+    out = table(t, ["Rule", "Detail"], [["x" * 80, "y" * 80], ["short", "ok"]])
     assert lines_fit(out, 50) and "…" in out
 
 
@@ -54,14 +54,14 @@ def test_table_ascii_fallback_has_no_unicode():
 
 def test_table_never_passes_hostile_escapes():
     t = Theme(3, True, width=80)
-    out = table(t, ["Nome"], [["x\x1b[31mROSSO\x1b[0m"], [Seg("y\x07", "bad")]])
+    out = table(t, ["Name"], [["x\x1b[31mRED\x1b[0m"], [Seg("y\x07", "bad")]])
     assert "x\x1b[31m" not in out and "\x07" not in out
 
 
 def test_colored_output_equals_plain_after_strip():
     rows = [[Seg("web-rce", "accent", True), Seg(" CRITICAL ", "crit", True), "ok"]]
-    plain = table(Theme(0, True, 80), ["Regola", "Gravità", "Altro"], rows)
-    colored = table(Theme(3, True, 80), ["Regola", "Gravità", "Altro"], rows)
+    plain = table(Theme(0, True, 80), ["Rule", "Severity", "Other"], rows)
+    colored = table(Theme(3, True, 80), ["Rule", "Severity", "Other"], rows)
     assert colored != plain and strip_ansi(colored) == plain
 
 
@@ -72,7 +72,7 @@ def test_table_rejects_ragged_rows():
 
 def test_panel_lines_have_equal_width():
     t = Theme(0, True, width=60)
-    out = panel(t, [Seg("titolo")], [[Seg("riga")], [Seg("x" * 200)]], right=[Seg("rev 2")])
+    out = panel(t, [Seg("title")], [[Seg("line")], [Seg("x" * 200)]], right=[Seg("rev 2")])
     assert {display_width(line) for line in out.splitlines()} == {60}
 
 
@@ -124,7 +124,7 @@ def test_alert_panel_renders_every_severity(sev, level):
 
 def test_alert_panel_other_kinds():
     t = Theme(0, True, 80)
-    assert "indicatore" in alert_panel(t, make_alert(Severity.HIGH, kind="indicator"))
+    assert "indicator" in alert_panel(t, make_alert(Severity.HIGH, kind="indicator"))
     eng = make_alert(Severity.CRITICAL, kind="engine")
     assert "web-rce-revshell" in alert_panel(t, eng)
 

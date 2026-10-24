@@ -1,4 +1,4 @@
-"""Viste riutilizzabili: alert, stati."""
+"""Reusable views: alerts, states."""
 
 from __future__ import annotations
 
@@ -31,20 +31,20 @@ def alert_panel(theme: Theme, alert: Alert, *, width: int | None = None) -> str:
         lines.append([*progress(theme, alert.steps_done, alert.steps_total),
                       Seg(f" {alert.steps_done}/{alert.steps_total}  ", "brown"),
                       Seg(alert.step_id, None, True),
-                      Seg("  (completa)" if alert.complete else "", "dim")])
+                      Seg("  (complete)" if alert.complete else "", "dim")])
     else:
-        lines.append([Seg("indicatore", "brown")])
+        lines.append([Seg("indicator", "brown")])
     if alert.description:
         lines.append([Seg(alert.description, "dim")])
-    meta = [Seg("risposta ", "brown"), response_seg(alert.response)]
+    meta = [Seg("response ", "brown"), response_seg(alert.response)]
     if alert.mitre:
         meta += [Seg("   MITRE ", "brown"), Seg(" ".join(alert.mitre))]
     lines.append(meta)
     where: list[Seg] = []
     if alert.remote_addr is not None:
-        where += [Seg("remoto ", "brown"), Seg(str(alert.remote_addr))]
+        where += [Seg("remote ", "brown"), Seg(str(alert.remote_addr))]
     if alert.anchor is not None:
-        where += [Seg("   " if where else "", "brown"), Seg("radice pid ", "brown"), Seg(str(alert.anchor.pid))]
+        where += [Seg("   " if where else "", "brown"), Seg("origin pid ", "brown"), Seg(str(alert.anchor.pid))]
     if where:
         lines.append(where)
     right = [Seg(f"rev {alert.revision}", "dim")] if alert.kind == "chain" else []
@@ -52,7 +52,7 @@ def alert_panel(theme: Theme, alert: Alert, *, width: int | None = None) -> str:
 
 
 def describe_event(theme: Theme, event) -> list[Seg]:
-    """Descrizione breve di un evento, per la cronologia di `replay`."""
+    """Short description of an event, for the `replay` timeline."""
     from erinix.core.events import AuthInfo, EventType, FileInfo, NetInfo, PrivInfo
 
     p, pl = event.process, event.payload
@@ -61,7 +61,7 @@ def describe_event(theme: Theme, event) -> list[Seg]:
         who = f"{p.exe.value.rsplit('/', 1)[-1] or p.comm.value}({p.key.pid})"
     arrow = theme.glyph("arrow")
     if event.type is EventType.PROCESS_EXEC and p is not None:
-        parent = f", padre {p.parent.pid}" if p.parent else ""
+        parent = f", parent {p.parent.pid}" if p.parent else ""
         return [Seg(p.exe.value), Seg(f"  pid {p.key.pid}{parent}", "dim")]
     if isinstance(pl, NetInfo):
         return [Seg(who), Seg(f" {arrow} {pl.remote_addr}:{pl.remote_port}")]
@@ -70,5 +70,5 @@ def describe_event(theme: Theme, event) -> list[Seg]:
     if isinstance(pl, FileInfo):
         return [Seg(f"{pl.operation} {pl.path.value}"), Seg(f"  {who}", "dim")]
     if isinstance(pl, AuthInfo):
-        return [Seg(f"{pl.service.value} utente {pl.user.value} da {pl.remote_addr}")]
+        return [Seg(f"{pl.service.value} user {pl.user.value} from {pl.remote_addr}")]
     return [Seg(event.type.value)]

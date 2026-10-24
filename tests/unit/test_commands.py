@@ -22,14 +22,14 @@ def run(capsys, *argv):
 def test_help_lists_commands(capsys):
     code, out, _ = run(capsys, "help")
     assert code == 0
-    for word in ("doctor", "rules validate", "rules list", "replay", "In arrivo"):
+    for word in ("doctor", "rules validate", "rules list", "replay", "Coming soon"):
         assert word in out
 
 
 def test_bare_erinix_without_tty_prints_help(capsys):
     code = main([])
     out = capsys.readouterr().out
-    assert code == 0 and "Comando" in out
+    assert code == 0 and "Command" in out
 
 
 def test_version(capsys):
@@ -39,7 +39,7 @@ def test_version(capsys):
 
 def test_unknown_command_suggests(capsys):
     code, _, err = run(capsys, "doctr")
-    assert code == 2 and "Intendevi 'doctor'" in err
+    assert code == 2 and "Did you mean 'doctor'" in err
 
 
 def test_group_without_subcommand(capsys):
@@ -51,7 +51,7 @@ def test_usage_errors(capsys):
     assert run(capsys, "rules", "list", "a", "b")[0] == 2
     assert run(capsys, "replay", "--boh")[0] == 2
     assert run(capsys, "replay", "--rules")[0] == 2
-    assert run(capsys, "replay", "inventato", "--rules", REPO_RULES)[0] == 2
+    assert run(capsys, "replay", "nonexistent", "--rules", REPO_RULES)[0] == 2
 
 
 def test_parse_args():
@@ -63,12 +63,12 @@ def test_parse_args():
 
 def test_rules_list(capsys):
     code, out, _ = run(capsys, "rules", "list", REPO_RULES)
-    assert code == 0 and "web-rce-revshell" in out and "catena" in out and "0 problemi" in out
+    assert code == 0 and "web-rce-revshell" in out and "chain" in out and "0 problems" in out
 
 
 def test_doctor(capsys):
     code, out, _ = run(capsys, "doctor", "--rules", REPO_RULES)
-    assert code == 0 and "Sensore in uso ora" in out and "Privilegi" in out
+    assert code == 0 and "Sensor in use now" in out and "Privileges" in out
 
 
 @pytest.mark.parametrize("name", list(SCENARIOS))
@@ -78,13 +78,13 @@ def test_replay_scenarios_behave_as_expected(capsys, name):
     if SCENARIOS[name].expect_alerts:
         assert "CRITICAL" in out or "HIGH" in out
     else:
-        assert "Nessun alert" in out
+        assert "No alerts" in out
 
 
 def test_replay_revshell_shows_progression(capsys):
     _, out, _ = run(capsys, "replay", "revshell", "--fast", "--rules", REPO_RULES)
     assert out.index("MEDIUM") < out.index("HIGH") < out.index("CRITICAL")
-    assert "(completa)" in out and "10.0.0.5" in out
+    assert "(complete)" in out and "10.0.0.5" in out
 
 
 def test_replay_missing_rules(capsys, tmp_path):
@@ -117,9 +117,9 @@ def test_console_loop(capsys):
 
 
 def test_console_reports_errors_and_survives(capsys):
-    make_console(["doctr", "echo 'aperta", "x" * 5000, "rules", "exit"]).run()
+    make_console(["doctr", "echo 'unclosed", "x" * 5000, "rules", "exit"]).run()
     err = capsys.readouterr().err
-    assert "comando sconosciuto" in err and "sintassi non valida" in err and "troppo lunga" in err
+    assert "unknown command" in err and "invalid syntax" in err and "too long" in err
 
 
 def test_console_ctrl_d_exits(capsys):
@@ -147,7 +147,7 @@ def test_history_is_private_and_untrusted_files_are_ignored(tmp_path, monkeypatc
     load_history(rl, path)
     assert rl.loaded
     rl2 = FakeReadline()
-    path.chmod(0o644)                      # accessibile ad altri: non ci si fida
+    path.chmod(0o644)                      # accessible to others: do not trust it
     load_history(rl2, path)
     assert rl2.loaded == []
 
@@ -156,11 +156,11 @@ def test_history_refuses_symlink(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     path = history_path()
     path.parent.mkdir(parents=True)
-    target = tmp_path / "bersaglio"
-    target.write_text("non toccare")
+    target = tmp_path / "target"
+    target.write_text("do not touch")
     path.symlink_to(target)
     save_history(FakeReadline(), path)
-    assert target.read_text() == "non toccare"
+    assert target.read_text() == "do not touch"
 
 
 def test_default_rules_path_falls_back_to_the_checkout(capsys, monkeypatch):
@@ -168,9 +168,9 @@ def test_default_rules_path_falls_back_to_the_checkout(capsys, monkeypatch):
 
     monkeypatch.setattr(builtin, "DEFAULT_RULES_DIR", "/nonexistent/erinix/rules")
     code, out, _ = run(capsys, "rules", "list")
-    assert code == 0 and "web-rce-revshell" in out and "regole" in out
+    assert code == 0 and "web-rce-revshell" in out and "rules" in out
     code, out, _ = run(capsys, "rules", "validate")
-    assert code == 0 and "0 problemi" in out
+    assert code == 0 and "0 problems" in out
     assert run(capsys, "replay", "admin", "--fast")[0] == 0
 
 
@@ -183,8 +183,8 @@ def test_context_emit_without_emitter_uses_theme_width(capsys):
     from erinix.commands.registry import Context
 
     ctx = Context.from_env(False)
-    ctx.emit(lambda width: f"larghezza={width}")
-    assert f"larghezza={ctx.theme.width}" in capsys.readouterr().out
+    ctx.emit(lambda width: f"width={width}")
+    assert f"width={ctx.theme.width}" in capsys.readouterr().out
     seen = []
     ctx.emitter = seen.append
     ctx.emit(lambda width: "x")

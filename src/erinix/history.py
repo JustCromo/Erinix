@@ -1,7 +1,7 @@
-"""Cronologia dei comandi: file privato (0600) e mai di cui non ci si fida.
+"""Command history: a private file (0600) that is never trusted blindly.
 
-Non si legge se non è un file regolare dell'utente o se è accessibile ad
-altri; non si scrive attraverso un symlink.
+It is not read unless it is a regular file owned by the user and not accessible
+to others; it is never written through a symlink.
 """
 
 from __future__ import annotations

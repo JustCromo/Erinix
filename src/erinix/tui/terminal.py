@@ -1,11 +1,11 @@
-"""Basso livello del terminale per la console a schermo intero (solo Unix).
+"""Low-level terminal handling for the full-screen console (Unix only).
 
-Stesse idee di Vulpnix (schermo alternativo, tasti grezzi, mouse SGR,
-selezione con copia tramite OSC 52), con alcune correzioni:
-- decodifica UTF-8 incrementale: le lettere accentate non si spezzano;
-- tasti letti a blocchi e separati da un tokenizer, con incolla protetta;
-- l'evidenziazione della selezione conserva i colori;
-- la copia negli appunti ha un limite di dimensione.
+Same ideas as Vulpnix (alternate screen, raw keys, SGR mouse, selection with
+copy via OSC 52), with a few fixes:
+- incremental UTF-8 decoding: accented letters are not split;
+- keys are read in chunks and split by a tokenizer, with protected paste;
+- selection highlighting keeps the colors;
+- clipboard copy has a size limit.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ _MOUSE = re.compile(r"\x1b\[<(\d{1,5});(\d{1,5});(\d{1,5})([Mm])")
 _CSI_BODY = set("0123456789:;<=>?") | set(" !\"#$%&'()*+,-./")
 
 
-# ----------------------------------------------------------------- larghezze
+# ----------------------------------------------------------------- widths
 def char_width(ch: str) -> int:
     if unicodedata.combining(ch):
         return 0
@@ -63,7 +63,7 @@ def terminal_size() -> tuple[int, int]:
 
 
 def clip_ansi_line(line: str, width: int) -> str:
-    """Taglia a `width` colonne conservando le sequenze di stile."""
+    """Clip to `width` columns, keeping the style sequences."""
     out: list[str] = []
     column = 0
     pos = 0
@@ -89,9 +89,9 @@ def clip_ansi_line(line: str, width: int) -> str:
     return "".join(out)
 
 
-# ------------------------------------------------------------------- tasti
+# ------------------------------------------------------------------- keys
 def tokenize(buf: str) -> tuple[list[str], str]:
-    """Separa l'input in tasti. Restituisce (tasti completi, resto incompleto)."""
+    """Split the input into keys. Returns (complete keys, incomplete remainder)."""
     tokens: list[str] = []
     i, n = 0, len(buf)
     while i < n:
@@ -113,7 +113,7 @@ def tokenize(buf: str) -> tuple[list[str], str]:
                 tokens.append(buf[i:j + 1])
                 i = j + 1
             else:
-                tokens.append(ESC)      # sequenza malformata: il resto si legge come testo
+                tokens.append(ESC)      # malformed sequence: the rest is read as text
                 i += 1
         elif nxt == "O":
             if i + 2 >= n:
@@ -121,13 +121,13 @@ def tokenize(buf: str) -> tuple[list[str], str]:
             tokens.append(buf[i:i + 3])
             i += 3
         else:
-            tokens.append(buf[i:i + 2])  # Alt + tasto
+            tokens.append(buf[i:i + 2])  # Alt + key
             i += 2
     return tokens, ""
 
 
 class KeyReader:
-    """Legge i tasti da un descrittore di file, uno alla volta."""
+    """Read keys from a file descriptor, one at a time."""
 
     def __init__(self, fd: int) -> None:
         self.fd = fd
@@ -141,7 +141,7 @@ class KeyReader:
                 return self._queue.pop(0)
             wait = _ESC_WAIT if self._rest else timeout
             if wait is not None and not select.select([self.fd], [], [], wait)[0]:
-                if self._rest:               # ESC isolato o sequenza rimasta a metà
+                if self._rest:               # lone ESC or a sequence left half-way
                     rest, self._rest = self._rest, ""
                     return rest
                 return None
@@ -158,8 +158,8 @@ class KeyReader:
 @dataclass(frozen=True, slots=True)
 class MouseEvent:
     button: int
-    x: int            # colonna, da 1
-    y: int            # riga, da 1
+    x: int            # column, 1-based
+    y: int            # row, 1-based
     released: bool
 
     @property
@@ -191,7 +191,7 @@ def parse_mouse(token: str) -> MouseEvent | None:
 
 @dataclass(frozen=True, slots=True)
 class Selection:
-    """Selezione di testo: (riga del documento, colonna), da zero."""
+    """Text selection: (document line, column), zero-based."""
 
     anchor: tuple[int, int]
     focus: tuple[int, int]
@@ -205,7 +205,7 @@ class Selection:
         return self.anchor == self.focus
 
     def columns(self, line: int) -> tuple[int, int | None] | None:
-        """Colonne selezionate (ultima inclusa; None = fino a fine riga)."""
+        """Selected columns (last one included; None = to the end of the line)."""
         (l0, c0), (l1, c1) = self.bounds
         if line < l0 or line > l1:
             return None
@@ -213,7 +213,7 @@ class Selection:
 
 
 def highlight_columns(text: str, start: int, end: int) -> str:
-    """Video inverso sulle colonne [start, end), conservando i colori."""
+    """Reverse video on columns [start, end), keeping the colors."""
     out: list[str] = []
     column = 0
     on = False
@@ -237,7 +237,7 @@ def highlight_columns(text: str, start: int, end: int) -> str:
         chars(text[pos:m.start()])
         out.append(m.group())
         if on and m.group().endswith("m"):
-            out.append(ESC + "[7m")        # un reset dentro la selezione non deve spegnerla
+            out.append(ESC + "[7m")        # a reset inside the selection must not switch it off
         pos = m.end()
     chars(text[pos:])
     if on:
@@ -246,7 +246,7 @@ def highlight_columns(text: str, start: int, end: int) -> str:
 
 
 def extract_selected_text(lines: list[str], selection: Selection) -> str:
-    """Testo visibile selezionato, senza sequenze di stile."""
+    """Selected visible text, without style sequences."""
     if selection.is_empty:
         return ""
     (l0, _), (l1, _) = selection.bounds
@@ -278,7 +278,7 @@ def extract_selected_text(lines: list[str], selection: Selection) -> str:
 
 
 def copy_to_clipboard(out: TextIO, text: str) -> bool:
-    """Chiede al terminale di copiare negli appunti (OSC 52), entro un limite."""
+    """Ask the terminal to copy to the clipboard (OSC 52), within a limit."""
     data = text.encode("utf-8")
     if not data or len(data) > MAX_CLIPBOARD_BYTES:
         return False
@@ -287,7 +287,7 @@ def copy_to_clipboard(out: TextIO, text: str) -> bool:
     return True
 
 
-# ------------------------------------------------------- modalità terminale
+# ------------------------------------------------------- terminal modes
 @contextmanager
 def raw_input_mode(fd: int) -> Iterator[None]:
     previous = termios.tcgetattr(fd)
@@ -304,7 +304,7 @@ def _exit_on_signal(signum: int, _frame: object) -> None:
 
 @contextmanager
 def fullscreen(out: TextIO) -> Iterator[None]:
-    """Schermo alternativo, mouse e incolla protetta; sempre ripristinati all'uscita."""
+    """Alternate screen, mouse and protected paste; always restored on exit."""
     previous: dict[int, object] = {}
     try:
         for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):

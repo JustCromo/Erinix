@@ -1,8 +1,8 @@
-"""Registro unico dei comandi.
+"""Single registry of commands.
 
-Tabella CHIUSA: ogni comando è una voce con funzione, aiuto e uso. Niente
-comandi costruiti da testo esterno, niente esecuzione in shell. Console
-interattiva e riga di comando pescano dalla stessa tabella.
+CLOSED table: every command is an entry with function, help and usage. No
+commands built from external text, no shell execution. The interactive
+console and the command line draw from the same table.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from erinix.ui.theme import Theme
 
 
 class UsageError(Exception):
-    """Argomenti non validi per il comando."""
+    """Invalid arguments for the command."""
 
 
 @dataclass(slots=True)
@@ -26,8 +26,8 @@ class Context:
     err_theme: Theme
     out: TextIO
     err: TextIO
-    # Se impostato (console a schermo intero), riceve i blocchi che dipendono dalla
-    # larghezza, così si possono ridisegnare quando il terminale cambia dimensione.
+    # If set (full-screen console), it receives width-dependent blocks so they can
+    # be redrawn when the terminal changes size.
     emitter: Callable[[Callable[[int], str]], None] | None = None
 
     @classmethod
@@ -44,7 +44,7 @@ class Context:
         self.say(paint_segs(self.theme, [Seg(safe(p.text), p.role, p.bold) for p in parts]))
 
     def emit(self, renderable: Callable[[int], str]) -> None:
-        """Stampa un blocco (tabella, pannello) la cui forma dipende dalla larghezza."""
+        """Print a block (table, panel) whose shape depends on the width."""
         if self.emitter is not None:
             self.emitter(renderable)
         else:
@@ -63,13 +63,13 @@ Handler = Callable[[Context, list[str]], int]
 
 @dataclass(frozen=True, slots=True)
 class Command:
-    name: str                  # "doctor" oppure "rules validate"
+    name: str                  # "doctor" or "rules validate"
     summary: str
     usage: str
     group: str
     handler: Handler
     arg_words: tuple[str, ...] = ()
-    sensitive: bool = False    # non finisce nella cronologia della console
+    sensitive: bool = False    # does not end up in the console history
 
 
 def parse_args(args: list[str], *, flags: Sequence[str] = (), options: Sequence[str] = (),
@@ -85,15 +85,15 @@ def parse_args(args: list[str], *, flags: Sequence[str] = (), options: Sequence[
         elif a in options:
             i += 1
             if i >= len(args):
-                raise UsageError(f"{safe(a)} richiede un valore")
+                raise UsageError(f"{safe(a)} requires a value")
             values[a] = args[i]
         elif a.startswith("-"):
-            raise UsageError(f"opzione sconosciuta: {safe(a)}")
+            raise UsageError(f"unknown option: {safe(a)}")
         else:
             positional.append(a)
         i += 1
     if len(positional) > max_positional:
-        raise UsageError("troppi argomenti")
+        raise UsageError("too many arguments")
     return positional, found, values
 
 
@@ -145,16 +145,16 @@ class Registry:
             word = tokens[0]
             groups = self._groups()
             if word in groups:
-                ctx.error(f"'{safe(word)}' richiede un sottocomando: {', '.join(sorted(groups[word]))}")
+                ctx.error(f"'{safe(word)}' needs a subcommand: {', '.join(sorted(groups[word]))}")
                 return 2
             hint = difflib.get_close_matches(word, self.first_words(), n=1)
-            extra = f" Intendevi '{hint[0]}'?" if hint else ""
-            ctx.error(f"comando sconosciuto: {safe(word)}.{extra} Scrivi 'help' per l'elenco.")
+            extra = f" Did you mean '{hint[0]}'?" if hint else ""
+            ctx.error(f"unknown command: {safe(word)}.{extra} Type 'help' for the list.")
             return 2
         command, args = found
         try:
             return command.handler(ctx, args)
         except UsageError as exc:
             ctx.error(str(exc))
-            print(f"  uso: {command.usage}", file=ctx.err)
+            print(f"  usage: {command.usage}", file=ctx.err)
             return 2

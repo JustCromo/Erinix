@@ -11,7 +11,7 @@ def build_chain():
     t = ProcessTree()
     t.on_exec(p(1, 0))                          # systemd
     t.on_exec(p(500, 10, 1, 0, "/usr/sbin/apache2"))
-    t.on_exec(p(900, 20, 500, 10))              # shell dal web server
+    t.on_exec(p(900, 20, 500, 10))              # shell spawned by the web server
     t.on_exec(p(950, 30, 900, 20, "/usr/bin/nc"))
     return t
 
@@ -24,13 +24,13 @@ def test_descendant():
 
 def test_pid_reuse_does_not_inherit_chain():
     t = build_chain()
-    # Stesso PID 900 ma avvio diverso: è un altro processo.
+    # Same PID 900 but a different start time: it is another process.
     assert not t.is_descendant(ProcessKey(900, 999), ProcessKey(500, 10))
 
 
 def test_exec_updates_image_keeps_parent():
     t = build_chain()
-    t.on_exec(p(900, 20, exe="/usr/bin/python3"))  # execve senza info sul genitore
+    t.on_exec(p(900, 20, exe="/usr/bin/python3"))  # execve without parent info
     assert t.get(ProcessKey(900, 20)).exe.value == "/usr/bin/python3"
     assert t.is_descendant(ProcessKey(900, 20), ProcessKey(500, 10))
 

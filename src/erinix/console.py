@@ -1,11 +1,11 @@
-"""Console interattiva di Erinix (prompt `erinix ▸`).
+"""Classic interactive console of Erinix (prompt `erinix ▸`), used with --plain.
 
-È un CLIENT: non è l'agente. Chiuderla non spegne la protezione, e una
-console compromessa non ha i poteri dell'agente.
+It is a CLIENT: it is not the agent. Closing it does not switch protection off,
+and a compromised console does not have the agent's powers.
 
-Sicurezza: tabella chiusa di comandi, nessuna esecuzione in shell, righe
-limitate in lunghezza, cronologia in un file 0600 che si rifiuta di leggere
-se non è dell'utente o è accessibile ad altri.
+Security: closed table of commands, no shell execution, length-limited lines,
+history in a 0600 file that it refuses to read if it is not the user's or is
+accessible to others.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from erinix.ui.render import Seg, banner, paint_segs
 
 def load_history(readline, path: Path) -> None:
     if not is_trusted(path):
-        return  # file altrui o accessibile ad altri: non ci si fida
+        return  # someone else's file, or accessible to others: do not trust it
     try:
         readline.read_history_file(str(path))
     except OSError:
@@ -76,12 +76,12 @@ class Console:
         for line in banner(self.ctx.theme, __version__):
             self.ctx.say(line)
         plan = selector.choose(selector.detect())
-        mode = {"ebpf": "eBPF", "auditd": "auditd", "minimal": "minimale"}[plan.mode.value]
+        mode = {"ebpf": "eBPF", "auditd": "auditd", "minimal": "minimal"}[plan.mode.value]
         self.ctx.say()
-        self.ctx.line(Seg("sensore ", "brown"), Seg(mode, "accent", True),
+        self.ctx.line(Seg("sensor ", "brown"), Seg(mode, "accent", True),
                       Seg(" (rootless)" if plan.rootless else "", "dim"),
-                      Seg("  ·  ", "border"), Seg("help", "accent"), Seg(" per i comandi, ", "dim"),
-                      Seg("exit", "accent"), Seg(" per uscire", "dim"))
+                      Seg("  ·  ", "border"), Seg("help", "accent"), Seg(" for commands, ", "dim"),
+                      Seg("exit", "accent"), Seg(" to quit", "dim"))
         self.ctx.say()
 
     def run(self) -> int:
@@ -105,12 +105,12 @@ class Console:
                 if not raw:
                     continue
                 if len(raw) > MAX_LINE:
-                    self.ctx.error("riga troppo lunga")
+                    self.ctx.error("line too long")
                     continue
                 try:
                     tokens = shlex.split(raw)
                 except ValueError as exc:
-                    self.ctx.error(f"sintassi non valida: {exc}")
+                    self.ctx.error(f"invalid syntax: {exc}")
                     continue
                 if tokens[0] in ("exit", "quit"):
                     break
@@ -119,7 +119,7 @@ class Console:
                     self.registry.run(self.ctx, tokens)
                 except KeyboardInterrupt:
                     self.ctx.say()
-                    self.ctx.error("interrotto")
+                    self.ctx.error("interrupted")
                 if found and found[0].sensitive and self._readline is not None:
                     n = self._readline.get_current_history_length()
                     if n:

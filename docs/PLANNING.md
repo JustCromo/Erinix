@@ -260,6 +260,7 @@ Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto)
 | 2026-10-24 | Palette a toni di riccio per le informazioni, semaforo per le segnalazioni; `NO_COLOR` rispettato | Leggibilità e identità visiva coerente con la suite |
 | 2026-10-24 | Console a schermo intero con mascotte (riccio), riquadri a sezioni, mouse e copia; console classica come ripiego | Stessa esperienza di Vulpnix, senza dipendenze |
 | 2026-10-24 | L'output dei comandi è fatto di blocchi ridisegnabili, non di righe già impaginate | Riallargando il terminale le tabelle devono tornare grandi, non restare alla larghezza di quando sono state stampate |
+| 2026-10-24 | Interfaccia, messaggi, commenti e docstring in inglese, come Vulpnix | Suite coerente e presentabile alle aziende; questo documento resta in italiano perché è destinato al docente |
 
 ### Ancora da decidere o riconfermare
 
@@ -267,5 +268,4 @@ Ordine di sviluppo: modello eventi e albero dei processi (fatto), regole (fatto)
 - Dati ostili: grezzi nel DB con escape in output (proposta adottata).
 - Strato di caricamento eBPF da Python (libreria esistente o piccolo componente in C).
 - Regolamento della sfida red vs blue (esche, blocchi IP, disponibilità dei servizi).
-- Lingua dell'interfaccia: Vulpnix è in inglese, Erinix oggi è in italiano. Da decidere se allinearli (una sola passata di traduzione).
 - Colori della console: Vulpnix usa un arancio pieno, Erinix marroni e arancio freddo. Da confermare che la differenza di tinta sia voluta.

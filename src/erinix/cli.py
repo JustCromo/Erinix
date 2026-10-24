@@ -1,6 +1,6 @@
-"""Punto d'ingresso: `erinix` apre la console; `erinix <comando>` esegue e termina.
+"""Entry point: `erinix` opens the console; `erinix <command>` runs and exits.
 
-Console e riga di comando usano lo stesso registro di comandi.
+The console and the command line use the same command registry.
 """
 
 from __future__ import annotations
