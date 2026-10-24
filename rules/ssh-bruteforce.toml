@@ -1,0 +1,26 @@
+schema = 1
+
+# Password guessing against SSH followed by a successful login from the
+# same remote address.
+[[chain]]
+id = "ssh-bruteforce-success"
+description = "Repeated SSH authentication failures from one address followed by a successful login."
+mitre = ["T1110.001"]
+window_seconds = 300
+link = "remote_ip"
+response = "interactive"
+
+[[chain.step]]
+id = "repeated-failures"
+event = "auth.failure"
+severity = "medium"
+count = 5
+[chain.step.match]
+service = ["sshd"]
+
+[[chain.step]]
+id = "success-after-failures"
+event = "auth.success"
+severity = "critical"
+[chain.step.match]
+service = ["sshd"]

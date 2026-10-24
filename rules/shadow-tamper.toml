@@ -1,0 +1,20 @@
+schema = 1
+
+# Single-event indicator: only the standard account tools should ever
+# write the password databases.
+[[indicator]]
+id = "shadow-written-by-unexpected-process"
+description = "The password database was modified by a process that is not a standard account tool."
+mitre = ["T1003.008"]
+event = "file.access"
+severity = "high"
+response = "interactive"
+[indicator.match]
+path = ["/etc/shadow", "/etc/gshadow"]
+operation = ["write"]
+exe_not = [
+  "/usr/bin/passwd", "/usr/bin/chpasswd", "/usr/bin/chage",
+  "/usr/bin/usermod", "/usr/bin/useradd", "/usr/bin/userdel",
+  "/usr/bin/vipw", "/usr/bin/gpasswd", "/usr/bin/groupadd",
+  "/usr/bin/groupmod", "/usr/bin/groupdel",
+]
