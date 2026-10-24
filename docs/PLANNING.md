@@ -210,7 +210,7 @@ Principle: the agent (a privileged service) is neither started nor controlled fr
 - **Protected paste** (bracketed paste): pasted text goes into the line and never executes anything; line breaks become spaces and the length is limited.
 - **Resizing**: tables and panels are blocks that are redrawn at the current width (at most 120 columns, for readability), also when the terminal grows again; text lines stay whole and are only cut at display time.
 - **Mouse**: wheel and PgUp/PgDn to scroll; dragging selects and copies to the clipboard. The terminal is always restored (screen, mouse, cursor), even on errors or signals.
-- **History** in `~/.local/state/erinix/history` with 0600 permissions: it is not read unless it belongs to the user and is not accessible to others, and it is never written through a symlink. Commands marked `sensitive` do not end up in the history.
+- **History** in `~/.local/state/erinix/history` with 0600 permissions: it is not read unless it belongs to the user and is not accessible to others, and it is never written through a symlink. Commands marked `sensitive` do not end up in the history. As root it always uses root's own home, never `$HOME` (which `sudo` may keep pointing at the caller's): root must never write into a directory that an unprivileged user controls.
 - **Colors**: information and highlights in hedgehog tones (light brown for information, dark brown for borders, cold orange for titles and commands); everything else in the terminal's default color; red, green and yellow reserved for alerts (severity: `low` green, `medium` yellow, `high` red, `critical` white on red). Truecolor, 256 and 16 color support, or none: `NO_COLOR` is respected, it can be forced with `ERINIX_COLOR=always|never` and turned off for a single command with `--no-color`. ASCII fallback if the terminal is not UTF-8.
 - **Local web** (to be built): `erinix ui` opens the page; listening only on `127.0.0.1`; access through a one-time link issued by the service after checking, via the kernel, who is asking (root or group `erinix`); `Host` header check against DNS rebinding; CSRF protection; blocking approvals only from authenticated sessions.
 
@@ -261,6 +261,7 @@ Development order: event model and process tree (done), rules (done), correlatio
 | 2026-10-24 | Full-screen console with hedgehog mascot, sectioned boxes, mouse and copy; classic console as fallback | Same experience as Vulpnix, with no dependencies |
 | 2026-10-24 | Command output is made of redrawable blocks, not pre-laid-out lines | When the terminal grows again, tables must grow back instead of staying at the width they were printed at |
 | 2026-10-24 | Interface, messages, comments, docstrings and documentation in English, like Vulpnix | A consistent suite that can be presented to companies |
+| 2026-10-24 | History file as root lives in root's home, never in `$HOME`; the console never ends silently (signals and closed stdin are declared) | A symlink in a user-controlled directory would turn a root write into privilege escalation; a silent exit is impossible to diagnose |
 
 ### Still to decide or reconfirm
 

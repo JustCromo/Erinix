@@ -410,3 +410,38 @@ def test_selection_is_cleared_when_resizing_with_blocks():
     assert app.selection is not None
     frame(app, cols=100)
     assert app.selection is None
+
+
+# ------------------------------------------------------------ root and exits
+def test_history_path_as_root_ignores_the_environment(monkeypatch, tmp_path):
+    from erinix import history as h
+    import types
+
+    monkeypatch.setattr(h, "_running_as_root", lambda: True)
+    monkeypatch.setattr(h.pwd, "getpwuid", lambda uid: types.SimpleNamespace(pw_dir="/root-home"))
+    monkeypatch.setenv("HOME", str(tmp_path / "caller"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "caller" / "state"))
+    assert str(h.history_path()) == "/root-home/.local/state/erinix/history"
+
+
+def test_history_path_as_user_uses_the_environment(monkeypatch, tmp_path):
+    from erinix import history as h
+
+    monkeypatch.setattr(h, "_running_as_root", lambda: False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert h.history_path() == tmp_path / "erinix" / "history"
+
+
+def test_stdin_closing_is_reported_not_silent(monkeypatch):
+    import contextlib
+
+    app = make_app()
+    monkeypatch.setattr(t, "raw_input_mode", lambda fd: contextlib.nullcontext())
+    monkeypatch.setattr(t, "fullscreen", lambda out: contextlib.nullcontext())
+
+    def closed(self, timeout=None):
+        raise EOFError
+
+    monkeypatch.setattr(t.KeyReader, "read", closed)
+    assert app.run(fd=0) == 0
+    assert "standard input ended" in app.exit_reason

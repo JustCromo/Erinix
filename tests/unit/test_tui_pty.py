@@ -81,8 +81,9 @@ def test_console_runs_executes_commands_and_restores_terminal(tmp_path):
     assert s.finish() == 0
     tail = s.buf[s.buf.rindex(t.RESET + t.PASTE_OFF):]
     assert tail == t.RESET + t.PASTE_OFF + t.MOUSE_OFF + t.CURSOR_SHOW + t.ALT_OFF
-    history = (tmp_path / "erinix" / "history").read_text()
-    assert "version" in history and oct(os.stat(tmp_path / "erinix" / "history").st_mode & 0o777) == "0o600"
+    if os.geteuid() != 0:          # as root the history lives in root's home, by design
+        history = (tmp_path / "erinix" / "history").read_text()
+        assert "version" in history and oct(os.stat(tmp_path / "erinix" / "history").st_mode & 0o777) == "0o600"
 
 
 def test_paste_with_newline_does_not_run_the_command(tmp_path):
@@ -104,4 +105,6 @@ def test_terminate_signal_restores_terminal(tmp_path):
     os.kill(s.pid, 15)
     code = s.finish()
     assert code == 128 + 15                       # orderly exit, not an abrupt termination
-    assert s.buf.endswith(t.RESET + t.PASTE_OFF + t.MOUSE_OFF + t.CURSOR_SHOW + t.ALT_OFF)
+    restore = t.RESET + t.PASTE_OFF + t.MOUSE_OFF + t.CURSOR_SHOW + t.ALT_OFF
+    assert restore in s.buf
+    assert "terminated by signal SIGTERM" in s.buf.split(restore)[-1]     # the exit is never silent

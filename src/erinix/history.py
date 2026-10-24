@@ -7,6 +7,7 @@ to others; it is never written through a symlink.
 from __future__ import annotations
 
 import os
+import pwd
 import stat
 from pathlib import Path
 
@@ -14,8 +15,21 @@ HISTORY_MAX = 500
 MAX_LINE = 4096
 
 
+def _running_as_root() -> bool:
+    return os.geteuid() == 0
+
+
 def history_path() -> Path:
-    base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    """Where the history lives.
+
+    As root it is ALWAYS root's own home, never $HOME or $XDG_STATE_HOME: `sudo` may keep
+    them pointing at the caller's home, and root must never write into a directory that an
+    unprivileged user controls (a symlink there would turn the write into a privilege escalation).
+    """
+    if _running_as_root():
+        base = os.path.join(pwd.getpwuid(0).pw_dir, ".local", "state")
+    else:
+        base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
     return Path(base) / "erinix" / "history"
 
 

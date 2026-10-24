@@ -119,6 +119,7 @@ class TuiApp:
         self.scroll = 0
         self.selection: term.Selection | None = None
         self.done = False
+        self.exit_reason = ""              # set when the console ends for a reason other than the user quitting
         self.flash = ""
         self._flash_until = 0.0
         self._paste: list[str] | None = None
@@ -430,6 +431,7 @@ class TuiApp:
                         self.draw(force=True)
                         continue
                     except EOFError:
+                        self.exit_reason = "console closed: standard input ended"
                         break
                     size_changed = self._size_fn()[0] != self._last_cols
                     flash_over = bool(self.flash) and self.clock() >= self._flash_until

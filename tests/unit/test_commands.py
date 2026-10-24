@@ -138,6 +138,7 @@ class FakeReadline:
 
 
 def test_history_is_private_and_untrusted_files_are_ignored(tmp_path, monkeypatch):
+    monkeypatch.setattr("erinix.history._running_as_root", lambda: False)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     path = history_path()
     rl = FakeReadline()
@@ -153,6 +154,7 @@ def test_history_is_private_and_untrusted_files_are_ignored(tmp_path, monkeypatc
 
 
 def test_history_refuses_symlink(tmp_path, monkeypatch):
+    monkeypatch.setattr("erinix.history._running_as_root", lambda: False)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     path = history_path()
     path.parent.mkdir(parents=True)
