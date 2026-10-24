@@ -298,7 +298,17 @@ def raw_input_mode(fd: int) -> Iterator[None]:
         termios.tcsetattr(fd, termios.TCSADRAIN, previous)
 
 
+_last_signal: int | None = None
+
+
+def last_signal() -> int | None:
+    """The signal that ended the console, if any (so the exit is never silent)."""
+    return _last_signal
+
+
 def _exit_on_signal(signum: int, _frame: object) -> None:
+    global _last_signal
+    _last_signal = signum
     raise SystemExit(128 + signum)
 
 
