@@ -80,6 +80,7 @@ def test_revshell_progressive_single_alert(rules):
     (a3,) = c.process(root_ev(SHELL, 4))
     assert a3.alert_id == a1.alert_id and a3.complete and a3.steps_done == 3
     assert a3.severity is Severity.CRITICAL and len(a3.evidence) == 3
+    assert a3.remote_addr == ipaddress.ip_address("10.0.0.5")      # ricordato dal passo precedente
 
 
 def test_descendant_process_counts_for_the_chain(rules):
