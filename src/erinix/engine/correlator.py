@@ -39,6 +39,7 @@ SWEEP_INTERVAL_NS = NS
 OVERLOAD_ALERT_INTERVAL_NS = 60 * NS
 MAX_EVIDENCE_IDS = 16
 MAX_INDICATOR_MEMORY = 4096
+INDICATOR_DEDUP_NS = 300 * NS      # the same rule for the same source alerts again after 5 minutes
 OVERLOAD_RULE_ID = "engine-overload"
 
 
@@ -87,7 +88,7 @@ class Correlator:
         self._instances: dict[tuple[str, object], _Instance] = {}
         self._candidates: dict[str, OrderedDict[object, None]] = defaultdict(OrderedDict)
         self._count: dict[str, int] = defaultdict(int)
-        self._seen_indicators: OrderedDict[tuple, None] = OrderedDict()
+        self._seen_indicators: OrderedDict[tuple, int] = OrderedDict()   # (rule, source) -> last alert time
         self._last_sweep = 0
         self._last_overload: int | None = None
 
@@ -258,11 +259,13 @@ class Correlator:
         who = event.process.key if event.process else getattr(event.payload, "remote_addr", None)
         if who is not None:
             ident = (ind.id, who)
-            if ident in self._seen_indicators:
+            last = self._seen_indicators.get(ident)
+            if last is not None and event.mono_ns - last < INDICATOR_DEDUP_NS:
                 self._seen_indicators.move_to_end(ident)
-                self.stats.suppressed_duplicates += 1
+                self.stats.suppressed_duplicates += 1        # counted, never silent
                 return None
-            self._seen_indicators[ident] = None
+            self._seen_indicators[ident] = event.mono_ns
+            self._seen_indicators.move_to_end(ident)
             while len(self._seen_indicators) > MAX_INDICATOR_MEMORY:
                 self._seen_indicators.popitem(last=False)
         return Alert(
