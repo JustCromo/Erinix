@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
-from erinix.core.events import AuthInfo, Event, FileInfo, NetInfo, PrivInfo, ProcessInfo
+from erinix.core.events import AuthInfo, Event, FileInfo, NetInfo, PrivInfo, ProcessInfo, WebInfo
 from erinix.core.process_tree import ProcessTree
 
 _Check = Callable[[Any, "ProcessInfo | None", Any, ProcessTree], bool]
@@ -47,9 +47,15 @@ _CHECKS: dict[str, _Check] = {
     "remote_port": lambda w, p, pl, t: isinstance(pl, NetInfo) and pl.remote_port in w,
     "local_port": lambda w, p, pl, t: isinstance(pl, NetInfo) and pl.local_port in w,
     "became_root": lambda w, p, pl, t: isinstance(pl, PrivInfo) and pl.became_root == w,
-    "method": lambda w, p, pl, t: isinstance(pl, PrivInfo) and pl.method.value in w,
-    "path": lambda w, p, pl, t: isinstance(pl, FileInfo) and pl.path.value in w,
-    "path_prefix": lambda w, p, pl, t: isinstance(pl, FileInfo) and pl.path.value.startswith(w),
+    "method": lambda w, p, pl, t: (isinstance(pl, PrivInfo) and pl.method.value in w)
+    or (isinstance(pl, WebInfo) and pl.method in w),
+    "path": lambda w, p, pl, t: (isinstance(pl, FileInfo) and pl.path.value in w)
+    or (isinstance(pl, WebInfo) and pl.decoded_path in w),
+    "path_prefix": lambda w, p, pl, t: (isinstance(pl, FileInfo) and pl.path.value.startswith(w))
+    or (isinstance(pl, WebInfo) and pl.decoded.startswith(w)),
+    "contains": lambda w, p, pl, t: isinstance(pl, WebInfo) and any(s in pl.decoded for s in w),
+    "user_agent_contains": lambda w, p, pl, t: isinstance(pl, WebInfo) and any(s in pl.agent for s in w),
+    "status": lambda w, p, pl, t: isinstance(pl, WebInfo) and pl.status in w,
     "operation": lambda w, p, pl, t: isinstance(pl, FileInfo) and pl.operation in w,
     "service": lambda w, p, pl, t: isinstance(pl, AuthInfo) and pl.service.value in w,
 }

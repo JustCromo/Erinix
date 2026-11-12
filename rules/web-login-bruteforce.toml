@@ -1,0 +1,29 @@
+schema = 1
+
+# Password guessing against a login form, followed by a request that works.
+[[chain]]
+id = "web-login-bruteforce-success"
+description = "Many failed logins from one address, followed by a successful one."
+mitre = ["T1110.001"]
+window_seconds = 300
+link = "remote_ip"
+response = "report_only"
+
+[[chain.step]]
+id = "repeated-failed-logins"
+event = "web.request"
+severity = "medium"
+count = 8
+[chain.step.match]
+method = ["POST"]
+contains = ["login", "signin", "sign-in", "/api/token"]
+status = [400, 401, 403]
+
+[[chain.step]]
+id = "login-worked-after-failures"
+event = "web.request"
+severity = "critical"
+[chain.step.match]
+method = ["POST"]
+contains = ["login", "signin", "sign-in", "/api/token"]
+status = [200, 201, 302, 303]

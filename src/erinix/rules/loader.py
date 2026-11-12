@@ -23,6 +23,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from erinix.core.events import FILE_OPERATIONS, EventType
+from erinix.core.webnorm import normalize_target
 
 SCHEMA_VERSION = 1
 
@@ -82,14 +83,19 @@ MATCH_FIELDS: Mapping[EventType, Mapping[str, str]] = MappingProxyType({
     EventType.FILE_ACCESS: {**_PROC, "path": _STR, "path_prefix": _STR, "operation": _STR},
     EventType.AUTH_FAILURE: {"service": _STR},
     EventType.AUTH_SUCCESS: {"service": _STR},
+    EventType.WEB_REQUEST: {"contains": _STR, "user_agent_contains": _STR, "method": _STR,
+                            "status": _INT, "path": _STR, "path_prefix": _STR},
 })
 
 _ABSOLUTE_FIELDS = frozenset({"exe", "exe_not", "parent_exe", "ancestor_exe", "path",
                               "exe_prefix", "path_prefix"})
 
-_REMOTE_IP_EVENTS = frozenset({EventType.NET_CONNECT, EventType.NET_ACCEPT,
-                               EventType.AUTH_FAILURE, EventType.AUTH_SUCCESS})
+_REMOTE_IP_EVENTS = frozenset({EventType.NET_CONNECT, EventType.NET_ACCEPT, EventType.AUTH_FAILURE,
+                               EventType.AUTH_SUCCESS, EventType.WEB_REQUEST})
 _AUTH_EVENTS = frozenset({EventType.AUTH_FAILURE, EventType.AUTH_SUCCESS})
+_NO_PROCESS_EVENTS = _AUTH_EVENTS | {EventType.WEB_REQUEST}     # events with no process attached
+_WEB_TEXT_FIELDS = frozenset({"contains", "user_agent_contains", "path", "path_prefix"})
+MIN_SUBSTRING = 3          # shorter substrings would match almost everything
 
 
 # ------------------------------------------------------------------ model
@@ -224,13 +230,22 @@ def _parse_match(event: EventType, raw: object, where: str) -> Mapping[str, Any]
                 raise RuleError(f"{w}: must be true or false")
             result[key] = value
         elif kind == _INT:
-            result[key] = _int_list(value, w, 0, 65535)
+            low, high = (100, 599) if key == "status" else (0, 65535)
+            result[key] = _int_list(value, w, low, high)
         else:
             items = _str_list(value, w)
             if key in _ABSOLUTE_FIELDS and not all(i.startswith("/") for i in items):
                 raise RuleError(f"{w}: absolute paths required (starting with '/')")
             if key == "operation" and not set(items) <= FILE_OPERATIONS:
                 raise RuleError(f"{w}: allowed operations: {', '.join(sorted(FILE_OPERATIONS))}")
+            if event is EventType.WEB_REQUEST:
+                if key == "method" and not all(i.isascii() and i.isalpha() and i.isupper() for i in items):
+                    raise RuleError(f"{w}: HTTP methods must be upper-case letters (e.g. GET)")
+                if key in _WEB_TEXT_FIELDS:
+                    # Rule values are normalized exactly like request targets (case, encoding...).
+                    items = tuple(dict.fromkeys(normalize_target(i) for i in items))
+                    if key in ("contains", "user_agent_contains") and any(len(i.strip()) < MIN_SUBSTRING for i in items):
+                        raise RuleError(f"{w}: each text must have at least {MIN_SUBSTRING} characters")
             result[key] = items
     return MappingProxyType(result)
 
@@ -275,8 +290,8 @@ def _parse_step(raw: object, index: int, where: str, default: Response, link: Li
         raise RuleError(f"{w}: event {event.value} cannot be used in rules")
     if link is Link.REMOTE_IP and event not in _REMOTE_IP_EVENTS:
         raise RuleError(f"{w}: with link 'remote_ip' events must carry a remote address")
-    if link is Link.LOGIN_SESSION and event in _AUTH_EVENTS:
-        raise RuleError(f"{w}: with link 'login_session' events must be tied to a process")
+    if link in (Link.LOGIN_SESSION, Link.PROCESS_TREE) and event in _NO_PROCESS_EVENTS:
+        raise RuleError(f"{w}: with link '{link.value}' events must be tied to a process")
     severity = _enum(Severity, raw.get("severity"), w, "severity")
     response = default if "response" not in raw else _enum(Response, raw["response"], w, "response")
     count = raw.get("count", 1)

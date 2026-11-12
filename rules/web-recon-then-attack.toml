@@ -1,0 +1,25 @@
+schema = 1
+
+# Someone probes for pages that do not exist, then sends an attack payload.
+[[chain]]
+id = "web-recon-then-attack"
+description = "Many requests for missing pages from one address, followed by an injection attempt."
+mitre = ["T1595.003", "T1190"]
+window_seconds = 300
+link = "remote_ip"
+response = "report_only"
+
+[[chain.step]]
+id = "probing-for-pages"
+event = "web.request"
+severity = "medium"
+count = 10
+[chain.step.match]
+status = [404]
+
+[[chain.step]]
+id = "payload-after-probing"
+event = "web.request"
+severity = "high"
+[chain.step.match]
+contains = ["union select", "../", "/etc/passwd", "<script", "' or '1'='1", "' or 1=1", "sleep(", "${jndi:"]
