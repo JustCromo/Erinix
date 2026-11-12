@@ -119,6 +119,9 @@ class Chain:
     response: Response
     justification: str
     steps: tuple[Step, ...]
+    title: str = ""                       # plain-language headline ({remote} is replaced)
+    why: str = ""                         # why it matters, in plain language
+    next_steps: tuple[str, ...] = ()      # what to do, in plain language
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +134,9 @@ class Indicator:
     response: Response
     justification: str
     match: Mapping[str, Any]
+    title: str = ""
+    why: str = ""
+    next_steps: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +269,30 @@ def _common(raw: Mapping[str, Any], where: str) -> tuple[str, tuple[str, ...]]:
     return description, tuple(dict.fromkeys(mitre_raw))
 
 
+MAX_TITLE, MAX_WHY, MAX_NEXT_ITEMS, MAX_NEXT = 120, 400, 6, 200
+
+
+def _plain_text(value: object, where: str, limit: int) -> str:
+    """Text shown to people. The only placeholder allowed is {remote}."""
+    text = _text(value, where, limit)
+    if "{" in text.replace("{remote}", "") or "}" in text.replace("{remote}", ""):
+        raise RuleError(f"{where}: the only placeholder allowed is {{remote}}")
+    return text
+
+
+def _human(raw: Mapping[str, Any], where: str) -> tuple[str, str, tuple[str, ...]]:
+    """Optional plain-language texts: title, why, next (a list of suggested steps)."""
+    title = _plain_text(raw["title"], f"{where}, title", MAX_TITLE) if "title" in raw else ""
+    why = _plain_text(raw["why"], f"{where}, why", MAX_WHY) if "why" in raw else ""
+    steps: tuple[str, ...] = ()
+    if "next" in raw:
+        value = raw["next"]
+        if not isinstance(value, list) or not 1 <= len(value) <= MAX_NEXT_ITEMS:
+            raise RuleError(f"{where}: 'next' must be a list of 1-{MAX_NEXT_ITEMS} short sentences")
+        steps = tuple(_plain_text(item, f"{where}, next", MAX_NEXT) for item in value)
+    return title, why, steps
+
+
 def _justification(raw: Mapping[str, Any], where: str, needed: bool) -> str:
     if "justification" not in raw:
         if needed:
@@ -305,8 +335,9 @@ def _parse_chain(raw: dict) -> Chain:
     rule_id = _ident(raw, "chain")
     where = f"chain {rule_id}"
     _check_keys(raw, {"id", "description", "mitre", "window_seconds", "link", "response",
-                      "justification", "step"}, where)
+                      "justification", "step", "title", "why", "next"}, where)
     description, mitre = _common(raw, where)
+    title, why, next_steps = _human(raw, where)
     window = raw.get("window_seconds")
     if isinstance(window, bool) or not isinstance(window, int) or not MIN_WINDOW <= window <= MAX_WINDOW:
         raise RuleError(f"{where}: 'window_seconds' must be an integer from {MIN_WINDOW} to {MAX_WINDOW}")
@@ -322,21 +353,24 @@ def _parse_chain(raw: dict) -> Chain:
         raise RuleError(f"{where}: step ids must be unique")
     needs_just = default is Response.AUTO or any(s.response is Response.AUTO for s in steps)
     justification = _justification(raw, where, needs_just)
-    return Chain(rule_id, description, mitre, window, link, default, justification, steps)
+    return Chain(rule_id, description, mitre, window, link, default, justification, steps,
+                 title, why, next_steps)
 
 
 def _parse_indicator(raw: dict) -> Indicator:
     rule_id = _ident(raw, "indicator")
     where = f"indicator {rule_id}"
     _check_keys(raw, {"id", "description", "mitre", "event", "severity", "response",
-                      "justification", "match"}, where)
+                      "justification", "match", "title", "why", "next"}, where)
     description, mitre = _common(raw, where)
+    title, why, next_steps = _human(raw, where)
     event = _enum(EventType, raw.get("event"), where, "event")
     severity = _enum(Severity, raw.get("severity"), where, "severity")
     response = Response.REPORT_ONLY if "response" not in raw else _enum(Response, raw["response"], where, "response")
     match = _parse_match(event, raw.get("match"), where)
     justification = _justification(raw, where, response is Response.AUTO)
-    return Indicator(rule_id, description, mitre, event, severity, response, justification, match)
+    return Indicator(rule_id, description, mitre, event, severity, response, justification, match,
+                     title, why, next_steps)
 
 
 # ------------------------------------------------------- file security

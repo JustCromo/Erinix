@@ -253,6 +253,7 @@ class Correlator:
             description=chain.description, evidence=tuple(inst.evidence),
             process=event.process.key if event.process else None, anchor=inst.anchor,
             remote_addr=remote, mono_ns=event.mono_ns, wall_ns=event.wall_ns,
+            title=chain.title, why=chain.why, next_steps=chain.next_steps,
         )
 
     def _indicator_alert(self, ind: Indicator, event: Event) -> Alert | None:
@@ -276,6 +277,7 @@ class Correlator:
             process=event.process.key if event.process else None, anchor=None,
             remote_addr=getattr(event.payload, "remote_addr", None),
             mono_ns=event.mono_ns, wall_ns=event.wall_ns,
+            title=ind.title, why=ind.why, next_steps=ind.next_steps,
         )
 
     def _overload_alert(self, chain: Chain, event: Event) -> list[Alert]:
@@ -292,4 +294,8 @@ class Correlator:
             mono_ns=event.mono_ns, wall_ns=event.wall_ns,
             detail=(f"rule={chain.id} evicted={self.stats.evicted_instances} "
                     f"refused={self.stats.refused_instances}"),
+            title="Erinix is receiving more data than it can handle",
+            why="Someone may be flooding this machine with noise to hide a real attack. Erinix keeps "
+                "tracking attacks already in progress and counts everything it has to drop.",
+            next_steps=("Look at which source is producing the flood", "Check the other alerts from the same time"),
         )]

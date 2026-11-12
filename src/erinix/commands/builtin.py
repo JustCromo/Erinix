@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -18,8 +19,8 @@ from erinix.ui.views import alert_panel, describe_event, response_seg, severity_
 DEFAULT_RULES_DIR = "/etc/erinix/rules"
 MODE_NAMES = {"ebpf": "eBPF (CO-RE)", "auditd": "auditd", "minimal": "minimal"}
 _RESPONSE_RANK = {Response.REPORT_ONLY: 0, Response.INTERACTIVE: 1, Response.AUTO: 2}
-GROUP_ORDER = ("General", "Diagnostics", "Rules", "Demo")
-COMING_SOON = "start · stop · status · ui · watch · alerts · incident · response · block · sensor"
+GROUP_ORDER = ("General", "Status", "Dashboard", "Diagnostics", "Rules", "Demo", "Setup")
+COMING_SOON = "agent · watch · incident · response · block · sensor"
 
 
 # ------------------------------------------------------------------ helpers
@@ -60,7 +61,10 @@ def default_rules_path(explicit: str | None = None) -> str:
     if os.path.isdir(DEFAULT_RULES_DIR):
         return DEFAULT_RULES_DIR
     checkout = Path(__file__).resolve().parents[3] / "rules"   # for development from a repository only
-    return str(checkout) if checkout.is_dir() else DEFAULT_RULES_DIR
+    if checkout.is_dir():
+        return str(checkout)
+    installed = Path(sys.prefix) / "share" / "erinix" / "rules"   # rules shipped with a normal pip install
+    return str(installed) if installed.is_dir() else DEFAULT_RULES_DIR
 
 
 # ----------------------------------------------------------------- commands
@@ -241,4 +245,21 @@ def build_registry() -> Registry:
     reg.add(Command("replay", "Replay a simulated attack and show the alerts",
                     "replay [scenario] [--fast] [--rules PATH]", "Demo", cmd_replay,
                     arg_words=tuple(SCENARIOS) + ("--fast", "--rules")))
+    from erinix.commands import store_cmds as sc
+
+    for name, summary, usage, group, handler, words in (
+        ("status", "What needs your attention, in plain language", "status [--json]", "Status", sc.cmd_status, ("--json",)),
+        ("alerts", "List the alerts", "alerts [--all|--dismissed] [--json]", "Status", sc.cmd_alerts, ("--all", "--dismissed", "--json")),
+        ("alert", "Explain one alert (add --tech for details)", "alert <n> [--tech] [--json]", "Status", sc.cmd_alert, ("--tech", "--json")),
+        ("dismiss", "Hide an alert you have dealt with", "dismiss <n>", "Status", sc.cmd_dismiss, ()),
+        ("reopen", "Bring a dismissed alert back", "reopen <n>", "Status", sc.cmd_reopen, ()),
+        ("sources", "What Erinix watches, and its blind spots", "sources [--json]", "Status", sc.cmd_sources, ("--json",)),
+        ("ui", "Open the web dashboard", "ui [--no-browser] [--port N]", "Dashboard", sc.cmd_ui, ("--no-browser", "--port")),
+        ("serve", "Run the dashboard in this terminal", "serve [--port N]", "Dashboard", sc.cmd_serve, ("--port",)),
+        ("stop", "Stop the dashboard", "stop", "Dashboard", sc.cmd_stop, ()),
+        ("demo", "Load simulated attacks to try Erinix", "demo [--reset]", "Demo", sc.cmd_demo, ("--reset",)),
+        ("install-app", "Add Erinix to your app menu (no venv needed)", "install-app [--terminal NAME]", "Setup", sc.cmd_install_app, ("--terminal", "--force")),
+        ("uninstall-app", "Remove the app menu entry", "uninstall-app", "Setup", sc.cmd_uninstall_app, ()),
+    ):
+        reg.add(Command(name, summary, usage, group, handler, arg_words=words))
     return reg

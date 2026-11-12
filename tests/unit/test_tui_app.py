@@ -445,3 +445,26 @@ def test_stdin_closing_is_reported_not_silent(monkeypatch):
     monkeypatch.setattr(t.KeyReader, "read", closed)
     assert app.run(fd=0) == 0
     assert "standard input ended" in app.exit_reason
+
+
+# ------------------------------------------------------------ live state
+def test_status_bar_shows_the_live_state_and_follows_changes():
+    state = {"now": ("critical", "Needs your attention now (3 open)")}
+    app = make_app()
+    app._status_provider = lambda: state["now"]
+    app.live = app._status_provider()
+    bar = t.strip_ansi(frame(app))
+    assert "Needs your attention now (3 open)" in bar.splitlines()[-1] or "Needs your attention now (3 open)" in bar
+    state["now"] = ("protected", "Protected: nothing needs your attention")
+    app.live = app._status_provider()
+    assert "Protected: nothing needs your attention" in t.strip_ansi(frame(app))
+    app.live = ("", "")
+    assert "Protected" not in t.strip_ansi(frame(app)).splitlines()[-1]
+
+
+def test_welcome_screen_has_a_state_row():
+    session = SessionInfo(1000, "minimal", "eBPF (CO-RE)", True, "sudo /opt/erinix", "Needs your attention now")
+    app = make_app(session=session)
+    out = t.strip_ansi(frame(app))
+    assert "STATE" in out and "Needs your attention now" in out and "status" in out and "ui" in out
+    assert "STATE" in t.strip_ansi(frame(make_app()))            # without a state it still says something

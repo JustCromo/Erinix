@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Erinix</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/" aria-label="Erinix home"><img src="/static/logo.svg" alt="" width="36" height="36"><span>Erinix</span></a>
+    <nav id="nav" aria-label="Main">
+      <a href="#/" data-view="overview">Overview</a>
+      <a href="#/alerts" data-view="alerts">Alerts <span id="nav-count" class="count" hidden></span></a>
+      <a href="#/sources" data-view="sources">Sources</a>
+    </nav>
+    <div id="pill" class="pill state-stopped" role="status" aria-live="polite">Connecting…</div>
+  </header>
+  <div id="banner" class="banner" role="note" hidden></div>
+  <main id="app" tabindex="-1"></main>
+  <footer>Erinix · part of the Nemirix suite · <span id="version"></span></footer>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

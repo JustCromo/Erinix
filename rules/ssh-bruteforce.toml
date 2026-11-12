@@ -4,6 +4,14 @@ schema = 1
 # same remote address.
 [[chain]]
 id = "ssh-bruteforce-success"
+title = "Someone is guessing SSH passwords from {remote}"
+why = "Many failed logins in a short time, followed by one that worked, usually mean a password was guessed."
+next = [
+  "Change the password of the account that was used",
+  "Check recent logins with the last command",
+  "Block {remote} on your firewall",
+  "Prefer SSH keys and turn password login off",
+]
 description = "Repeated SSH authentication failures from one address followed by a successful login."
 mitre = ["T1110.001"]
 window_seconds = 300

@@ -6,6 +6,13 @@ schema = 1
 
 [[indicator]]
 id = "web-sqli-attempt"
+title = "Someone tried to attack the database through the website from {remote}"
+why = "The request contains database commands where normal visitors send plain text. Attackers use this (SQL injection) to read or change data."
+next = [
+  "Check the web app logs to see what that request did",
+  "Make sure the app uses parameterized queries",
+  "Consider blocking {remote}",
+]
 description = "A request contains SQL injection syntax."
 mitre = ["T1190"]
 event = "web.request"
@@ -19,6 +26,13 @@ contains = [
 
 [[indicator]]
 id = "web-path-traversal"
+title = "Someone tried to read private files through the website from {remote}"
+why = "The request uses tricks like ../ to leave the website's folder and reach system files."
+next = [
+  "Check that the app never builds file paths from user input",
+  "Confirm sensitive files are not readable by the web user",
+  "Consider blocking {remote}",
+]
 description = "A request tries to read files outside the web root."
 mitre = ["T1190", "T1083"]
 event = "web.request"
@@ -29,6 +43,13 @@ contains = ["../", "..\\", "/etc/passwd", "/etc/shadow", "/proc/self/", "c:\\win
 
 [[indicator]]
 id = "web-command-injection"
+title = "Someone tried to run commands on the server through the website from {remote}"
+why = "The request contains shell syntax. If the app passes it to a system command, the attacker could run programs on your machine."
+next = [
+  "Check whether any feature runs system commands with user input",
+  "Look for unexpected programs started by the web server",
+  "Consider blocking {remote}",
+]
 description = "A request contains shell command syntax."
 mitre = ["T1190", "T1059.004"]
 event = "web.request"
@@ -39,6 +60,13 @@ contains = ["; cat ", ";cat ", "| cat ", "|cat ", "$(id", "$(cat", "$(curl", "$(
 
 [[indicator]]
 id = "web-template-or-script-injection"
+title = "Someone sent script or template code to the website from {remote}"
+why = "The request carries code meant to run in a visitor's browser or inside the server's page templates."
+next = [
+  "Check the page that received it for unescaped output",
+  "Make sure user text is escaped before it is displayed",
+  "Consider blocking {remote}",
+]
 description = "A request contains script, template or JNDI injection syntax."
 mitre = ["T1190", "T1059"]
 event = "web.request"
@@ -49,6 +77,13 @@ contains = ["<script", "javascript:", "onerror=", "onload=", "{{7*7}}", "{{confi
 
 [[indicator]]
 id = "web-attack-tool-user-agent"
+title = "An attack tool is scanning the website from {remote}"
+why = "The visitor identifies itself as a security scanner. That is normal in practice battles and common in real probing."
+next = [
+  "If this is your own test, you can ignore it",
+  "Otherwise consider blocking {remote}",
+  "Check the other alerts from the same address",
+]
 description = "The client identifies itself as a known attack or scanning tool."
 mitre = ["T1595.002"]
 event = "web.request"

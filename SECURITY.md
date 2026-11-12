@@ -17,6 +17,9 @@ Include what you found, how to reproduce it and the version (`erinix --version`)
 - The console never forwards untrusted text to the terminal unfiltered.
 - Running as root is only needed for features that require it; the history file of a root session
   never lives in a directory controlled by an unprivileged user.
+- The web dashboard listens on the local machine only, signs you in with a one-time link, checks the
+  address it was called by, protects changes against forged requests and loads nothing from other sites.
+- The alert store is a private file readable only by its owner.
 - No secrets belong in the repository, in rules or in documentation.
 
 ## Supported versions

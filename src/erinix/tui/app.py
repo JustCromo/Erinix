@@ -99,12 +99,16 @@ class TuiApp:
                  session_fn: Callable[[], welcome.SessionInfo] = welcome.session_info,
                  history: list[str] | None = None, history_file: Path | None = None,
                  clock: Callable[[], float] = time.monotonic,
-                 size_fn: Callable[[], tuple[int, int]] = term.terminal_size) -> None:
+                 size_fn: Callable[[], tuple[int, int]] = term.terminal_size,
+                 status_provider: Callable[[], tuple[str, str]] | None = None) -> None:
         self.registry = registry
         self.theme = theme
         self.out = out
         self._session_fn = session_fn
         self._size_fn = size_fn
+        self._status_provider = status_provider
+        self.live: tuple[str, str] = status_provider() if status_provider else ("", "")
+        self._last_status_poll = 0.0
         self.session = session or session_fn()
         self._welcome_key: tuple | None = None
         self._welcome_lines: list[str] = []
@@ -204,7 +208,11 @@ class TuiApp:
             tail = [Seg(self.flash, "ok", True)]
         else:
             tail = [Seg("wheel/PgUp: scroll  ·  drag: copy  ·  Ctrl-L: clear  ·  Ctrl-D: exit", "dim")]
-        parts = [Seg(f" {t.glyph('star')} ERINIX ", "accent", True), Seg(self.session.status_text, "brown"),
+        state, text = self.live
+        role = {"critical": "bad", "attention": "warn", "protected": "ok"}.get(state, "dim")
+        icon = {"critical": t.glyph("bad"), "attention": t.glyph("warn"), "protected": t.glyph("ok")}.get(state, t.glyph("dot"))
+        live = [Seg(f"{icon} {text}", role, True), Seg("  ·  ", "border")] if text else []
+        parts = [Seg(f" {t.glyph('star')} ERINIX ", "accent", True), *live, Seg(self.session.status_text, "brown"),
                  Seg("  ·  ", "border"), *tail]
         fitted = fit(parts, cols, t.glyph("ell"))
         return paint_segs(t, fitted)
@@ -434,6 +442,11 @@ class TuiApp:
                         self.exit_reason = "console closed: standard input ended"
                         break
                     size_changed = self._size_fn()[0] != self._last_cols
+                    if self._status_provider and self.clock() - self._last_status_poll >= 2.0:
+                        self._last_status_poll = self.clock()
+                        fresh = self._status_provider()
+                        if fresh != self.live:
+                            self.live, size_changed = fresh, True       # redraw when the state changed
                     flash_over = bool(self.flash) and self.clock() >= self._flash_until
                     if flash_over:
                         self.flash = ""
