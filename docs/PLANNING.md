@@ -93,6 +93,7 @@ Concepts:
 - **`count`**: the step needs N events (e.g. 5 failed logins).
 - **`response`**: `report_only` (default), `interactive`, `auto`. It can be overridden per step, because the response is attached to the step and not to the end of the chain (timeliness).
 - **`mitre`**: related MITRE ATT&CK techniques.
+- **Web requests** (`web.request`) can be matched on `contains` (a substring of the request after normalization: decoding, case-folding and similar clean-up), `user_agent_contains`, `method`, `status`, `path` and `path_prefix`. Rule values are normalized the same way, substrings need at least 3 characters, and there are still no regular expressions.
 
 Rule security (checked at startup by `erinix rules validate`):
 
@@ -121,6 +122,7 @@ Security choices:
 7. **Process tree with bounded memory**: exited processes are sacrificed first; if a live process is lost it is **counted and declared**.
 8. **The sensor must report when it is blind**: startup, mode, lost events, stopped sensor.
 9. **Canonical paths from sensors**: file paths must arrive already resolved (no `/etc/../etc/shadow`, no symlinks) and the executable must be the one seen by the kernel. The engine compares exact strings and trusts the sensor on this point.
+10. **Log lines are hostile text** (web and sshd logs): parsers use no regular expressions and parse sshd lines from the END (a user name can carry a fake "from <ip>" tail meant to frame someone else); a line counts as sshd only if the syslog program tag sits right after the host name; the web client address comes from Caddy's `client_ip`/`remote_ip` and never from forwarded headers; sizes are bounded, and malformed lines are rejected, never guessed.
 
 ## 8. Correlation and alerts
 
@@ -135,7 +137,7 @@ How the engine reasons (`engine/correlator.py`):
 - **Sliding window for `count`** (like fail2ban): for a step with `count = 5`, any 5 events within the last `window_seconds` count. Chosen for simplicity and predictability; slow attacks are covered by a second rule with a longer window and a higher threshold, without complicating the engine.
 - **After the first step** the whole chain must finish within `window_seconds` of its start; then the instance expires and a new story can begin.
 - **Process tree updated by the engine**: a process with the same PID but a different start time is another process and does not inherit the chain.
-- **Indicators**: one alert per (rule, process) pair; duplicates are **counted** (`suppressed_duplicates`), not silently ignored.
+- **Indicators**: one alert per (rule, source) pair, where the source is the process or the remote address; the same rule alerts again for the same source after 5 minutes; duplicates are **counted** (`suppressed_duplicates`), not silently ignored.
 - **Comparisons without regex**: exact values, prefixes, lists. An unknown field never matches (it fails closed). An unknown executable does not count as "unexpected" (the sensor may simply not see it).
 
 Engine memory and overload:
@@ -237,7 +239,7 @@ Planned commands: `start`, `stop`, `status`, `ui`, `watch`, `alerts`, `incident`
 - **November 6, 2026**: red team vs blue team challenge (Raspberry Pi). "Competition-ready" Erinix: sensor, a few solid chains, decoys, response with expiry and untouchable list, terminal alerts, no web console. Erinix is built for **any Linux**, not tailored to the Raspberry Pi.
 - **November 19, 2026**: final delivery (risk assessment tool and web application, with VSPT). Nemirix console, Vulpnix integration, incident assessment, report.
 
-Development order: event model and process tree (done), rules (done), correlation engine (done), basic console and commands (done), guard and response, lane-based bus, eBPF sensor, auditd fallback, decoys, storage, web console.
+Development order: event model and process tree (done), rules (done), correlation engine (done), basic console and commands (done), web and sshd log parsers with their rules (done), log sources and live watching, storage, web dashboard, guard and response, lane-based bus, eBPF sensor, auditd fallback, decoys.
 
 ## 17. Decision log
 
@@ -262,6 +264,8 @@ Development order: event model and process tree (done), rules (done), correlatio
 | 2026-10-24 | Command output is made of redrawable blocks, not pre-laid-out lines | When the terminal grows again, tables must grow back instead of staying at the width they were printed at |
 | 2026-10-24 | Interface, messages, comments, docstrings and documentation in English, like Vulpnix | A consistent suite that can be presented to companies |
 | 2026-10-24 | History file as root lives in root's home, never in `$HOME`; the console never ends silently (signals and closed stdin are declared) | A symlink in a user-controlled directory would turn a root write into privilege escalation; a silent exit is impossible to diagnose |
+| 2026-11-12 | Web attacks are detected from the Caddy access log, with normalized requests and rules without regex; sshd from its log, parsed from the end | The Raspberry runs web apps behind Caddy: most attacks there never show up as processes |
+| 2026-11-12 | Erinix must run on the user's own PC too: sources are configurable, nothing is hard-wired to one app | Daily use, not only the Raspberry |
 
 ### Still to decide or reconfirm
 

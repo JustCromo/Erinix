@@ -35,6 +35,7 @@ class Source(str, Enum):
     EBPF = "ebpf"
     AUDITD = "auditd"
     MINIMAL = "minimal"
+    LOG = "log"          # parsed from log files: text that an attacker can influence
 
 
 class EventType(str, Enum):
@@ -51,6 +52,7 @@ class EventType(str, Enum):
     SENSOR_STOPPED = "sensor.stopped"
     SENSOR_MODE = "sensor.mode"
     SENSOR_EVENTS_LOST = "sensor.events_lost"
+    WEB_REQUEST = "web.request"
 
     @property
     def family(self) -> str:
@@ -260,7 +262,51 @@ class SensorInfo:
         return cls(mode, Text.of(detail, MAX_SHORT), lost)
 
 
-Payload = Union[NetInfo, PrivInfo, FileInfo, AuthInfo, SensorInfo]
+MAX_METHOD = 16
+MAX_USER_AGENT = 256
+
+
+@dataclass(frozen=True, slots=True)
+class WebInfo:
+    """One HTTP request as seen in a web server access log."""
+
+    remote_addr: ipaddress.IPv4Address | ipaddress.IPv6Address
+    method: str                 # upper-case HTTP token
+    host: Text
+    target: Text                # request target exactly as logged (path + query), bounded
+    decoded: str                # normalized form used by the rules (decoded, case-folded)
+    status: int
+    user_agent: Text
+    agent: str                  # normalized user agent (case-folded)
+    size: int | None
+
+    @classmethod
+    def build(cls, *, remote_addr, method, target, status, host="", user_agent="", size=None) -> "WebInfo":
+        from erinix.core.webnorm import normalize_target
+
+        addr = _ip(remote_addr)
+        if addr is None:
+            raise ValueError("missing remote address")
+        verb = str(method).upper()
+        if not 1 <= len(verb) <= MAX_METHOD or not verb.isascii() or not verb.isalpha():
+            raise ValueError("invalid HTTP method")
+        if isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599:
+            raise ValueError(f"invalid HTTP status: {status!r}")
+        if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 0):
+            raise ValueError("invalid response size")
+        if not isinstance(target, (str, bytes)):
+            raise ValueError("invalid request target")
+        text = Text.of(target, MAX_PATH)
+        agent = Text.of(user_agent, MAX_USER_AGENT)
+        return cls(addr, verb, Text.of(host, MAX_SHORT), text, normalize_target(text.value), status,
+                   agent, normalize_target(agent.value, MAX_USER_AGENT), size)
+
+    @property
+    def decoded_path(self) -> str:
+        return self.decoded.split("?", 1)[0]
+
+
+Payload = Union[NetInfo, PrivInfo, FileInfo, AuthInfo, SensorInfo, WebInfo]
 
 _PAYLOAD_BY_FAMILY: dict[str, type | None] = {
     "process": None,
@@ -269,6 +315,7 @@ _PAYLOAD_BY_FAMILY: dict[str, type | None] = {
     "file": FileInfo,
     "auth": AuthInfo,
     "sensor": SensorInfo,
+    "web": WebInfo,
 }
 
 _PROCESS_REQUIRED = frozenset({"process", "priv", "net", "file"})

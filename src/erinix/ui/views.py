@@ -53,7 +53,7 @@ def alert_panel(theme: Theme, alert: Alert, *, width: int | None = None) -> str:
 
 def describe_event(theme: Theme, event) -> list[Seg]:
     """Short description of an event, for the `replay` timeline."""
-    from erinix.core.events import AuthInfo, EventType, FileInfo, NetInfo, PrivInfo
+    from erinix.core.events import AuthInfo, EventType, FileInfo, NetInfo, PrivInfo, WebInfo
 
     p, pl = event.process, event.payload
     who = ""
@@ -69,6 +69,8 @@ def describe_event(theme: Theme, event) -> list[Seg]:
         return [Seg(who), Seg(f"  uid {pl.old_uid} {arrow} {pl.new_uid} ({pl.method.value})")]
     if isinstance(pl, FileInfo):
         return [Seg(f"{pl.operation} {pl.path.value}"), Seg(f"  {who}", "dim")]
+    if isinstance(pl, WebInfo):
+        return [Seg(f"{pl.remote_addr} {pl.method} {pl.target.value[:70]}"), Seg(f"  {arrow} {pl.status}", "dim")]
     if isinstance(pl, AuthInfo):
         return [Seg(f"{pl.service.value} user {pl.user.value} from {pl.remote_addr}")]
     return [Seg(event.type.value)]
