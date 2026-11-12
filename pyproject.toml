@@ -20,5 +20,11 @@ erinix = "erinix.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"erinix.web" = ["static/*"]
+
+[tool.setuptools.data-files]
+"share/erinix/rules" = ["rules/*.toml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

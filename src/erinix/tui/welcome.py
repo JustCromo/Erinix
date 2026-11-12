@@ -20,9 +20,11 @@ MIN_TWO_PANELS = 96
 
 COMMANDS = (
     ("help", "Explore available commands and options"),
+    ("status", "See what needs your attention"),
+    ("alerts", "List the alerts, then: alert 1"),
+    ("ui", "Open the web dashboard"),
+    ("demo", "Load simulated attacks to try Erinix"),
     ("doctor", "Check what Erinix can use on this machine"),
-    ("rules list", "List the loaded detection rules"),
-    ("replay", "Replay a simulated attack"),
     ("clear", "Refresh this welcome screen (Ctrl-L)"),
 )
 INTRO = (
@@ -41,6 +43,7 @@ class SessionInfo:
     potential: str       # readable name of the sensor with root privileges
     rootless: bool
     launch: str          # command to start with privileges
+    state: str = ""      # one-line live state read from the store
 
     @property
     def status_text(self) -> str:
@@ -48,10 +51,12 @@ class SessionInfo:
 
 
 def session_info() -> SessionInfo:
+    from erinix.summary import live_state
+
     plan = selector.choose(selector.detect())
     exe = shutil.which("erinix") or "erinix"
     return SessionInfo(os.geteuid(), MODE_NAMES[plan.mode.value], MODE_NAMES[plan.potential.value],
-                       plan.rootless, f"sudo {exe}")
+                       plan.rootless, f"sudo {exe}", live_state()[1])
 
 
 def _left(theme: Theme, width: int, info: SessionInfo) -> list[str]:
@@ -67,6 +72,7 @@ def _left(theme: Theme, width: int, info: SessionInfo) -> list[str]:
     mode = ("ROOTLESS" if info.rootless else "ROOT") + f" {theme.glyph('dot')} UID {info.euid}"
     sensor = info.mode.upper() + ("" if not info.rootless else f" {theme.glyph('dot')} with root: {info.potential}")
     session: list[list[Seg]] = [
+        [Seg("STATE".ljust(lw), "accent", True), Seg(info.state or "No data yet")],
         [Seg("MODE".ljust(lw), "accent", True), Seg(mode)],
         [Seg("SENSOR".ljust(lw), "accent", True), Seg(sensor)],
     ]

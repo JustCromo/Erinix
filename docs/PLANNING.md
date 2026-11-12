@@ -214,7 +214,7 @@ Principle: the agent (a privileged service) is neither started nor controlled fr
 - **Mouse**: wheel and PgUp/PgDn to scroll; dragging selects and copies to the clipboard. The terminal is always restored (screen, mouse, cursor), even on errors or signals.
 - **History** in `~/.local/state/erinix/history` with 0600 permissions: it is not read unless it belongs to the user and is not accessible to others, and it is never written through a symlink. Commands marked `sensitive` do not end up in the history. As root it always uses root's own home, never `$HOME` (which `sudo` may keep pointing at the caller's): root must never write into a directory that an unprivileged user controls.
 - **Colors**: information and highlights in hedgehog tones (light brown for information, dark brown for borders, cold orange for titles and commands); everything else in the terminal's default color; red, green and yellow reserved for alerts (severity: `low` green, `medium` yellow, `high` red, `critical` white on red). Truecolor, 256 and 16 color support, or none: `NO_COLOR` is respected, it can be forced with `ERINIX_COLOR=always|never` and turned off for a single command with `--no-color`. ASCII fallback if the terminal is not UTF-8.
-- **Local web** (to be built): `erinix ui` opens the page; listening only on `127.0.0.1`; access through a one-time link issued by the service after checking, via the kernel, who is asking (root or group `erinix`); `Host` header check against DNS rebinding; CSRF protection; blocking approvals only from authenticated sessions.
+- **Local web** (built): `erinix ui` opens the page; listening only on `127.0.0.1`; access through a one-time link issued by the service after checking, via the kernel, who is asking (root or group `erinix`); `Host` header check against DNS rebinding; CSRF protection; blocking approvals only from authenticated sessions.
 
 Current commands: `help`, `version`, `doctor` (machine capabilities and planned sensor), `rules validate`, `rules list`, `replay` (simulated attacks: `revshell`, `bruteforce`, `shadow`, `admin`).
 
@@ -239,7 +239,7 @@ Planned commands: `start`, `stop`, `status`, `ui`, `watch`, `alerts`, `incident`
 - **November 6, 2026**: red team vs blue team challenge (Raspberry Pi). "Competition-ready" Erinix: sensor, a few solid chains, decoys, response with expiry and untouchable list, terminal alerts, no web console. Erinix is built for **any Linux**, not tailored to the Raspberry Pi.
 - **November 19, 2026**: final delivery (risk assessment tool and web application, with VSPT). Nemirix console, Vulpnix integration, incident assessment, report.
 
-Development order: event model and process tree (done), rules (done), correlation engine (done), basic console and commands (done), web and sshd log parsers with their rules (done), log sources and live watching, storage, web dashboard, guard and response, lane-based bus, eBPF sensor, auditd fallback, decoys.
+Development order: event model and process tree (done), rules (done), correlation engine (done), basic console and commands (done), web and sshd log parsers with their rules (done), alert store, dashboard and console views fed by demo data (done), live log sources and the agent, guard and response, lane-based bus, eBPF sensor, auditd fallback, decoys.
 
 ## 17. Decision log
 
@@ -266,6 +266,10 @@ Development order: event model and process tree (done), rules (done), correlatio
 | 2026-10-24 | History file as root lives in root's home, never in `$HOME`; the console never ends silently (signals and closed stdin are declared) | A symlink in a user-controlled directory would turn a root write into privilege escalation; a silent exit is impossible to diagnose |
 | 2026-11-12 | Web attacks are detected from the Caddy access log, with normalized requests and rules without regex; sshd from its log, parsed from the end | The Raspberry runs web apps behind Caddy: most attacks there never show up as processes |
 | 2026-11-12 | Erinix must run on the user's own PC too: sources are configurable, nothing is hard-wired to one app | Daily use, not only the Raspberry |
+| 2026-11-13 | Console, dashboard and scripts all read ONE shared private SQLite store, instead of calling an agent API (for now) | Simpler and safer for a single user; an API or socket with peer checks comes with multi-user setups |
+| 2026-11-13 | Alerts carry plain-language text written in the rule (`title`, `why`, `next`); technical details sit behind "See more" / `--tech` | Easy to read first, nothing technical lost |
+| 2026-11-13 | Dashboard: loopback only, login by a one-time link from `erinix ui`, host check, CSRF header, strict CSP, plain JavaScript that never builds HTML | A local web page must not become the easiest way in |
+| 2026-11-13 | `erinix install-app` adds a launcher, a menu entry and the icon under the user's home; no venv activation, no root | Use Erinix like a normal app |
 
 ### Still to decide or reconfirm
 

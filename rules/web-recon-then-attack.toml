@@ -3,6 +3,13 @@ schema = 1
 # Someone probes for pages that do not exist, then sends an attack payload.
 [[chain]]
 id = "web-recon-then-attack"
+title = "Someone searched the site for hidden pages, then attacked it ({remote})"
+why = "Many requests for pages that do not exist usually mean automated scanning. A real attack followed from the same address."
+next = [
+  "Review the other alerts from {remote}",
+  "Block {remote}",
+  "Check that admin and backup pages are not exposed",
+]
 description = "Many requests for missing pages from one address, followed by an injection attempt."
 mitre = ["T1595.003", "T1190"]
 window_seconds = 300

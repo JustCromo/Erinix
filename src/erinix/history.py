@@ -19,8 +19,8 @@ def _running_as_root() -> bool:
     return os.geteuid() == 0
 
 
-def history_path() -> Path:
-    """Where the history lives.
+def state_dir() -> Path:
+    """Where Erinix keeps its private state (history, alert store, server info).
 
     As root it is ALWAYS root's own home, never $HOME or $XDG_STATE_HOME: `sudo` may keep
     them pointing at the caller's home, and root must never write into a directory that an
@@ -30,7 +30,11 @@ def history_path() -> Path:
         base = os.path.join(pwd.getpwuid(0).pw_dir, ".local", "state")
     else:
         base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
-    return Path(base) / "erinix" / "history"
+    return Path(base) / "erinix"
+
+
+def history_path() -> Path:
+    return state_dir() / "history"
 
 
 def is_trusted(path: Path) -> bool:

@@ -38,3 +38,6 @@ class Alert:
     mono_ns: int
     wall_ns: int
     detail: str = ""
+    title: str = ""                 # plain-language headline from the rule ({remote} still in it)
+    why: str = ""
+    next_steps: tuple[str, ...] = ()

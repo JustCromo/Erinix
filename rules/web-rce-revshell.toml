@@ -4,6 +4,14 @@ schema = 1
 # from that shell, then privilege escalation.
 [[chain]]
 id = "web-rce-revshell"
+title = "A web program started a command line and then connected out"
+why = "A web server has no normal reason to start a shell and then open a connection to another machine. This is the typical sign of an attacker who got control through the website."
+next = [
+  "Treat this machine as possibly compromised",
+  "Check what {remote} is and whether you expect traffic to it",
+  "Review recent changes to the website and its uploads",
+  "Rotate passwords and keys used on this machine",
+]
 description = "A network service spawns a shell that opens an outbound connection (web RCE to reverse shell), then escalates to root."
 mitre = ["T1190", "T1059.004", "T1068"]
 window_seconds = 600

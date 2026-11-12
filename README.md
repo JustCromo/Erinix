@@ -3,22 +3,14 @@
 Host-based intrusion detection for Linux, part of the **Nemirix** suite alongside Vulpnix.
 
 Erinix is built to watch what happens on a machine: it links events into attack chains
-(for example: many missing pages, then an injection attempt) and raises alerts
-that grow in severity as an attack progresses.
+(for example: many missing pages, then an injection attempt) and raises alerts that grow in
+severity as an attack progresses. Alerts are written for people first (what happened, why it
+matters, what to do) with the technical details one click away.
 
-> Status: alpha. Today it detects from recorded or simulated events; reading
-> live logs and the web dashboard are the next steps.
+> Status: alpha. The detection engine, the console and the web dashboard work today with
+> recorded or simulated events (`erinix demo`). Reading live logs is the next step.
 
-## What it can do today
-
-- **Detection engine**: attack chains with progressive alerts, sliding windows and bounded memory.
-- **Web attacks** (Caddy access logs): SQL injection, path traversal, command and script injection,
-  attack-tool user agents, page scanning followed by an attack, password guessing on a login form.
-- **SSH password guessing** (sshd logs), including log-injection tricks.
-- **Console**: full-screen interface with the commands below.
-- **Rules**: plain TOML files, validated strictly. No code and no regular expressions in rules.
-
-## Install
+## Quick start
 
 ```bash
 git clone git@github.com:JustCromo/Erinix.git
@@ -27,28 +19,53 @@ python -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 python -m pytest -q
+erinix install-app
 ```
+
+`erinix install-app` adds an `erinix` command that works without activating the venv, an
+"Erinix" entry in your application menu and its icon. Everything is written under your home folder;
+no root needed. Remove it with `erinix uninstall-app`.
 
 Requires Python 3.11 or newer. There are no runtime dependencies.
 
 ## Try it
 
 ```bash
-erinix                         # open the console
-erinix doctor                  # what Erinix can use on this machine
-erinix rules list              # the loaded rules
-erinix replay web              # a simulated attack on a web app, with its alerts
-erinix replay webquiet         # normal web traffic: no alerts expected
-erinix replay ssh              # SSH password guessing
-erinix replay revshell         # compromised web server -> shell -> root
+erinix demo        # load simulated attacks into Erinix
+erinix             # open the console
+erinix status      # what needs your attention, in plain language
+erinix alerts      # the list; then: erinix alert 1   (add --tech for the technical side)
+erinix ui          # open the web dashboard in your browser
 ```
 
-Other scenarios: `bruteforce`, `shadow`, `admin`. Add `--fast` to skip the pauses.
 Inside the console, type the same commands without `erinix`.
+
+## The dashboard
+
+`erinix ui` starts a small local web server (127.0.0.1 only) and opens your browser with a private
+sign-in link that works once. The dashboard shows the same facts as the console: a plain-language
+summary, the alerts with "See more" for technical details, and what Erinix is watching (and what it
+cannot see). Stop it with `erinix stop`.
+
+## For scripts and desktop widgets
+
+Every information command has `--json`:
+
+```bash
+erinix status --json
+erinix alerts --json
+erinix sources --json
+```
+
+## Other commands
+
+`erinix doctor` (what this machine allows), `erinix rules list`, `erinix rules validate`,
+`erinix replay <scenario>` (web, webquiet, ssh, revshell, bruteforce, shadow, admin).
 
 ## Rules
 
-Rules live in `rules/*.toml`. `erinix rules validate` checks them. Rule files must be owned by root
+Rules live in `rules/*.toml`. They describe what to look for and, in plain English, what an alert
+means (`title`, `why`, `next`). `erinix rules validate` checks them. Rule files must be owned by root
 or by the user running Erinix and must not be writable by others.
 
 ## Security

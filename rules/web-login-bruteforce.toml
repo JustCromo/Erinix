@@ -3,6 +3,14 @@ schema = 1
 # Password guessing against a login form, followed by a request that works.
 [[chain]]
 id = "web-login-bruteforce-success"
+title = "Someone guessed a login password on the website ({remote})"
+why = "Many failed logins from one address, then one that worked. The account may now be in the wrong hands."
+next = [
+  "Reset the password of the account that logged in",
+  "Review what that account did after logging in",
+  "Add login rate limiting or a CAPTCHA",
+  "Block {remote}",
+]
 description = "Many failed logins from one address, followed by a successful one."
 mitre = ["T1110.001"]
 window_seconds = 300
