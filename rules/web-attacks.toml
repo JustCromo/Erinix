@@ -1,0 +1,58 @@
+schema = 1
+
+# Single requests that carry a well-known attack payload. Requests are matched
+# AFTER normalization (percent-decoding, case-folding, comment stripping), so
+# "UNION%20SELECT" and "un/**/ion sel/**/ect" are seen as "union select".
+
+[[indicator]]
+id = "web-sqli-attempt"
+description = "A request contains SQL injection syntax."
+mitre = ["T1190"]
+event = "web.request"
+severity = "high"
+response = "report_only"
+[indicator.match]
+contains = [
+  "union select", "union all select", "' or '1'='1", "' or 1=1", " or 1=1 --",
+  "information_schema", "sleep(", "benchmark(", "waitfor delay", "extractvalue(", "updatexml(",
+]
+
+[[indicator]]
+id = "web-path-traversal"
+description = "A request tries to read files outside the web root."
+mitre = ["T1190", "T1083"]
+event = "web.request"
+severity = "high"
+response = "report_only"
+[indicator.match]
+contains = ["../", "..\\", "/etc/passwd", "/etc/shadow", "/proc/self/", "c:\\windows"]
+
+[[indicator]]
+id = "web-command-injection"
+description = "A request contains shell command syntax."
+mitre = ["T1190", "T1059.004"]
+event = "web.request"
+severity = "high"
+response = "report_only"
+[indicator.match]
+contains = ["; cat ", ";cat ", "| cat ", "|cat ", "$(id", "$(cat", "$(curl", "$(wget", "`id`", "`cat ", "/bin/sh", "/bin/bash", "cmd.exe", "powershell", ";wget ", ";curl "]
+
+[[indicator]]
+id = "web-template-or-script-injection"
+description = "A request contains script, template or JNDI injection syntax."
+mitre = ["T1190", "T1059"]
+event = "web.request"
+severity = "high"
+response = "report_only"
+[indicator.match]
+contains = ["<script", "javascript:", "onerror=", "onload=", "{{7*7}}", "{{config", "__globals__", "__class__", "${jndi:"]
+
+[[indicator]]
+id = "web-attack-tool-user-agent"
+description = "The client identifies itself as a known attack or scanning tool."
+mitre = ["T1595.002"]
+event = "web.request"
+severity = "medium"
+response = "report_only"
+[indicator.match]
+user_agent_contains = ["sqlmap", "nikto", "gobuster", "dirbuster", "wfuzz", "hydra", "masscan", "nuclei", "feroxbuster", "fuzz faster", "nmap scripting engine"]
