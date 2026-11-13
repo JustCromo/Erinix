@@ -15,6 +15,7 @@ from typing import Sequence, Union
 from erinix.ui.theme import Theme
 
 MIN_COL = 6
+NARROW_COL = 2
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -118,13 +119,14 @@ def table(theme: Theme, headers: Sequence[str], rows: Sequence[Sequence[Cell]],
             raise ValueError("row with a different number of columns than the header")
     widths = [max([seg_width(head[i])] + [seg_width(r[i]) for r in body]) for i in range(n)]
     excess = sum(widths) + 3 * n + 1 - width
-    while excess > 0:
-        i = max(range(n), key=lambda k: widths[k])
-        if widths[i] <= MIN_COL:
-            break
-        cut = min(excess, widths[i] - MIN_COL)
-        widths[i] -= cut
-        excess -= cut
+    for floor in (MIN_COL, NARROW_COL):          # on very narrow terminals squeeze columns further rather than overflow
+        while excess > 0:
+            i = max(range(n), key=lambda k: widths[k])
+            if widths[i] <= floor:
+                break
+            cut = min(excess, widths[i] - floor)
+            widths[i] -= cut
+            excess -= cut
 
     g = theme.glyph
     ell = g("ell")

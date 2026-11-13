@@ -210,3 +210,14 @@ def test_demo_mode_counts_as_running(store):
     store.set_meta("mode", "demo")
     o = build_overview(store, now=NOW)
     assert o["demo"] and o["state"] == "protected" and "Demo" in o["headline"] and o["blind_spots"] == []
+
+
+def test_redeem_says_why(store):
+    token = store.create_login_token(now=NOW)
+    assert store.redeem_login_token(token, now=NOW + 1) == "ok"
+    assert store.redeem_login_token(token, now=NOW + 2) == "invalid"             # used (or never existed)
+    old = store.create_login_token(ttl=10, now=NOW)
+    assert store.redeem_login_token(old, now=NOW + 11) == "expired"
+    assert store.redeem_login_token(old, now=NOW + 12) == "invalid"             # an expired token is destroyed too
+    for junk in (None, 5, "", "short", ["x"], "a" * 101):
+        assert store.redeem_login_token(junk) == "invalid"

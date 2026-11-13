@@ -45,7 +45,9 @@ Inside the console, type the same commands without `erinix`.
 `erinix ui` starts a small local web server (127.0.0.1 only) and opens your browser with a private
 sign-in link that works once. The dashboard shows the same facts as the console: a plain-language
 summary, the alerts with "See more" for technical details, and what Erinix is watching (and what it
-cannot see). Stop it with `erinix stop`.
+cannot see). Stop it with `erinix stop`. If the link says it was already used, run `erinix ui` again for a new one.
+
+If the box-drawing symbols look misaligned in your terminal font, run with plain characters: `ERINIX_ASCII=1 erinix`.
 
 ## For scripts and desktop widgets
 

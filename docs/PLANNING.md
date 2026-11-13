@@ -268,7 +268,7 @@ Development order: event model and process tree (done), rules (done), correlatio
 | 2026-11-12 | Erinix must run on the user's own PC too: sources are configurable, nothing is hard-wired to one app | Daily use, not only the Raspberry |
 | 2026-11-13 | Console, dashboard and scripts all read ONE shared private SQLite store, instead of calling an agent API (for now) | Simpler and safer for a single user; an API or socket with peer checks comes with multi-user setups |
 | 2026-11-13 | Alerts carry plain-language text written in the rule (`title`, `why`, `next`); technical details sit behind "See more" / `--tech` | Easy to read first, nothing technical lost |
-| 2026-11-13 | Dashboard: loopback only, login by a one-time link from `erinix ui`, host check, CSRF header, strict CSP, plain JavaScript that never builds HTML | A local web page must not become the easiest way in |
+| 2026-11-13 | Dashboard: loopback only; login by a one-time link from `erinix ui` whose token rides in the address fragment and is sent once by the page (opening or pre-loading the link cannot use it up); host check, CSRF header, strict CSP, plain JavaScript that never builds HTML | A local web page must not become the easiest way in, and a one-time link must survive a double open |
 | 2026-11-13 | `erinix install-app` adds a launcher, a menu entry and the icon under the user's home; no venv activation, no root | Use Erinix like a normal app |
 
 ### Still to decide or reconfirm
