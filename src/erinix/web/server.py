@@ -80,6 +80,7 @@ def _load_static() -> dict[str, tuple[bytes, str]]:
     }
     svg = assets.logo_svg().encode("utf-8")
     files["/static/logo.svg"] = (svg, "image/svg+xml")
+    files["/static/hedgehog.svg"] = (assets.hedgehog_svg().encode("utf-8"), "image/svg+xml")
     files["/favicon.svg"] = (svg, "image/svg+xml")
     return files
 

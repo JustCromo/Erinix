@@ -20,7 +20,8 @@ def _hex(color: tuple[int, int, int]) -> str:
     return "#{:02x}{:02x}{:02x}".format(*color)
 
 
-def logo_svg() -> str:
+def logo_svg(background: bool = True) -> str:
+    """The hedgehog as SVG. Without background it is cropped to the animal, for use on top of other graphics."""
     grid = mascot.pixels()
     rects = []
     for y, row in enumerate(grid):
@@ -35,9 +36,16 @@ def logo_svg() -> str:
                 end += 1
             rects.append(f'<rect x="{x}" y="{y + _Y_OFFSET}" width="{end - x}" height="1" fill="{_hex(color)}"/>')
             x = end
+    if not background:
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 {_Y_OFFSET} {mascot.WIDTH} {mascot.HEIGHT}" '
+                'shape-rendering="crispEdges" role="img" aria-label="Erinix">' + "".join(rects) + "</svg>")
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="256" height="256" '
             'shape-rendering="crispEdges" role="img" aria-label="Erinix">'
             f'<rect width="32" height="32" rx="{RADIUS}" fill="{_hex(BACKGROUND)}"/>' + "".join(rects) + "</svg>")
+
+
+def hedgehog_svg() -> str:
+    return logo_svg(background=False)
 
 
 def _chunk(kind: bytes, data: bytes) -> bytes:

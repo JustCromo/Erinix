@@ -77,7 +77,8 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
     const doc = t.w.document;
     doc.querySelectorAll("details.more").forEach(d => { d.open = true; });
     checks["hostile_no_execution" + hash] = t.w.__pwned === undefined;
-    checks["hostile_only_logo_image" + hash] = doc.querySelectorAll("img").length === 1 && doc.querySelectorAll("iframe, svg[onload], b").length === 0;
+    const imgs = [...doc.querySelectorAll("img")];
+    checks["hostile_only_our_own_images" + hash] = imgs.length <= 2 && imgs.every(i => i.getAttribute("src").startsWith("/static/")) && doc.querySelectorAll("iframe, svg[onload], b").length === 0;
     checks["hostile_shown_as_text" + hash] = text(t.w, ".alert h3") === evil && text(t.w, ".next li") === "<b>bold</b>";
     checks["hostile_severity_falls_back" + hash] = doc.querySelector(".badge").className === "badge sev-low" && !doc.querySelector(".alert").className.includes("<");
     checks["hostile_no_scripts_added" + hash] = doc.scripts.length === 0;
