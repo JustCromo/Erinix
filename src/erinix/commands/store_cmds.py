@@ -11,19 +11,20 @@ import http.client
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
 import textwrap
 import time
-import webbrowser
 from pathlib import Path
 
+from erinix.browser import open_url
 from erinix.commands.registry import Context, UsageError, parse_args
 from erinix.rules import Severity
 from erinix.store import Store, StoreError
 from erinix.summary import ago, build_overview, empty_overview, humanize
-from erinix.ui.render import Seg, box
+from erinix.ui.render import Seg, box, paint_segs, safe
 from erinix.ui.views import severity_badge
 from erinix.web.server import DEFAULT_PORT, server_info_path
 
@@ -69,6 +70,26 @@ def _resolve(ctx: Context, store: Store, ref: str, status: str) -> dict | None:
     if row is None:
         ctx.error("no alert matches that id")
     return row
+
+
+def _hint(ctx: Context, *parts: Seg) -> None:
+    """A line of advice that wraps at word boundaries instead of running past the terminal edge."""
+    def build(width: int) -> str:
+        lines: list[list[Seg]] = [[]]
+        used = 0
+        for seg in parts:
+            for token in re.findall(r"\s*\S+|\s+", seg.text):
+                if used and used + len(token) > width:
+                    lines.append([])
+                    used = 0
+                    token = token.lstrip()
+                    if not token:
+                        continue
+                lines[-1].append(Seg(safe(token), seg.role, seg.bold))
+                used += len(token)
+        return "\n".join(paint_segs(ctx.theme, line) for line in lines)
+
+    ctx.emit(build)
 
 
 def _badge(severity: str) -> Seg:
@@ -142,12 +163,12 @@ def cmd_alerts(ctx: Context, args: list[str]) -> int:
         _json(ctx, rows)
         return 0
     if not rows:
-        ctx.line(Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Nothing needs your attention." if status == "open" else "No alerts here."))
+        _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Nothing needs your attention." if status == "open" else "No alerts here."))
         return 0
     ctx.table(["#", "Level", "What happened", "When"],
               [[Seg(str(i), "accent", True), _badge(a["severity"]), a["headline"], ago(a["updated"])]
                for i, a in enumerate(rows, 1)])
-    ctx.line(Seg("alert 1", "accent"), Seg(" shows the details; add ", "dim"), Seg("--tech", "accent"), Seg(" for the technical side.", "dim"))
+    _hint(ctx, Seg("alert 1", "accent"), Seg(" shows the details; add ", "dim"), Seg("--tech", "accent"), Seg(" for the technical side.", "dim"))
     return 0
 
 
@@ -205,8 +226,8 @@ def cmd_alert(ctx: Context, args: list[str]) -> int:
     title = [severity_badge(Severity(a["severity"])), Seg("  " + a["headline"], "accent", True)]
     ctx.emit(lambda w: "\n".join(box(ctx.theme, title, alert_sections(ctx, a, min(w, BOX_WIDTH), tech), width=min(w, BOX_WIDTH), border="brown")))
     if not tech:
-        ctx.line(Seg("Add ", "dim"), Seg("--tech", "accent"), Seg(" for the technical details, or ", "dim"),
-                 Seg(f"dismiss {pos[0]}", "accent"), Seg(" to hide it.", "dim"))
+        _hint(ctx, Seg("Add ", "dim"), Seg("--tech", "accent"), Seg(" for the technical details, or ", "dim"),
+              Seg(f"dismiss {pos[0]}", "accent"), Seg(" to hide it.", "dim"))
     return 0
 
 
@@ -225,7 +246,7 @@ def _set_status(ctx: Context, args: list[str], status: str) -> int:
     finally:
         store.close()
     verb = "dismissed" if status == "dismissed" else "reopened"
-    ctx.line(Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg(f"Alert {verb}: {humanize(row)['headline']}"))
+    _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg(f"Alert {verb}: {humanize(row)['headline']}"))
     return 0
 
 
@@ -252,7 +273,7 @@ def cmd_sources(ctx: Context, args: list[str]) -> int:
                   [[s.get("name", "?"), Seg(g("ok") + " Watching", "ok") if s.get("state") == "ok" else Seg(g("warn") + " Blind", "warn"),
                     s.get("detail", "")] for s in overview["sources"]])
     for blind in overview["blind_spots"]:
-        ctx.line(Seg(g("warn") + " ", "warn", True), Seg("Blind spot: " + blind))
+        _hint(ctx, Seg(g("warn") + " ", "warn", True), Seg("Blind spot: " + blind))
     return 0
 
 
@@ -273,7 +294,7 @@ def cmd_demo(ctx: Context, args: list[str]) -> int:
             return 1
         store.reset()
         if "--reset" in flags:
-            ctx.line(Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Store cleared."))
+            _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Store cleared."))
             return 0
         try:
             ruleset = load_rules(default_rules_path(None))
@@ -304,9 +325,9 @@ def cmd_demo(ctx: Context, args: list[str]) -> int:
             {"name": "Programs and commands", "state": "ok", "detail": "demo"},
             {"name": "Kernel-level events", "state": "blind", "detail": "need root"},
         ])
-    ctx.line(Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg(f"Demo data loaded: {total_alerts} alert updates from {total_events} simulated events."))
-    ctx.line(Seg("Try ", "dim"), Seg("status", "accent"), Seg(", ", "dim"), Seg("alerts", "accent"), Seg(" or ", "dim"), Seg("ui", "accent"),
-             Seg(" (the web dashboard).", "dim"))
+    _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg(f"Demo data loaded: {total_alerts} alert updates from {total_events} simulated events."))
+    _hint(ctx, Seg("Try ", "dim"), Seg("status", "accent"), Seg(", ", "dim"), Seg("alerts", "accent"), Seg(" or ", "dim"), Seg("ui", "accent"),
+          Seg(" (the web dashboard).", "dim"))
     return 0
 
 
@@ -362,14 +383,11 @@ def cmd_ui(ctx: Context, args: list[str]) -> int:
         else:
             ctx.error(f"the dashboard did not start on port {port} (is it in use? try --port)")
             return 1
-    url = f"http://127.0.0.1:{port}/login?t={token}"
-    ctx.line(Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Dashboard ready. This private link works once, for two minutes:"))
+    url = f"http://127.0.0.1:{port}/#login={token}"
+    _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Dashboard ready. This private link works once, for two minutes:"))
     ctx.line(Seg(url, "accent"))
-    if "--no-browser" not in flags:
-        try:
-            webbrowser.open(url)
-        except webbrowser.Error:
-            pass
+    if "--no-browser" not in flags and not open_url(url):
+        _hint(ctx, Seg("Could not open a browser: copy the link above into one.", "dim"))
     return 0
 
 
@@ -394,7 +412,7 @@ def cmd_stop(ctx: Context, args: list[str]) -> int:
     parse_args(args, max_positional=0)
     info = _read_server_info()
     if not info:
-        ctx.line(Seg("The dashboard is not running."))
+        _hint(ctx, Seg("The dashboard is not running."))
         return 0
     pid = info["pid"]
     try:
@@ -409,7 +427,7 @@ def cmd_stop(ctx: Context, args: list[str]) -> int:
         time.sleep(0.1)
         if not Path(f"/proc/{pid}").exists():
             break
-    ctx.line(Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Dashboard stopped."))
+    _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Dashboard stopped."))
     return 0
 
 
@@ -423,12 +441,12 @@ def cmd_install_app(ctx: Context, args: list[str]) -> int:
     except InstallError as exc:
         ctx.error(str(exc))
         return 1
-    ctx.line(Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Erinix is installed as an app."))
+    _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Erinix is installed as an app."))
     for path in result.written:
         ctx.line(Seg("  " + str(path), "dim"))
-    ctx.line(Seg("Terminal used by the menu entry: ", "brown"), Seg(result.terminal or "your desktop's default"))
+    _hint(ctx, Seg("Terminal used by the menu entry: ", "brown"), Seg(result.terminal or "your desktop's default"))
     for note in result.notes:
-        ctx.line(Seg(ctx.theme.glyph("warn") + " ", "warn", True), Seg(note))
+        _hint(ctx, Seg(ctx.theme.glyph("warn") + " ", "warn", True), Seg(note))
     return 0
 
 
@@ -437,7 +455,7 @@ def cmd_uninstall_app(ctx: Context, args: list[str]) -> int:
 
     parse_args(args, max_positional=0)
     removed = uninstall_app(Path.home())
-    ctx.line(Seg(f"Removed {len(removed)} file(s)." if removed else "Nothing to remove."))
+    _hint(ctx, Seg(f"Removed {len(removed)} file(s)." if removed else "Nothing to remove."))
     for path in removed:
         ctx.line(Seg("  " + str(path), "dim"))
     return 0

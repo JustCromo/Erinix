@@ -28,7 +28,7 @@ PALETTE: Mapping[str, tuple[tuple[int, int, int], int, int]] = {
 # Maximum severity: bold white on a red background.
 _CRIT = {3: "1;38;2;255;255;255;48;2;184;48;42", 2: "1;38;5;231;48;5;124", 1: "1;97;41"}
 
-MIN_WIDTH, MAX_WIDTH = 60, 120
+MIN_WIDTH, MAX_WIDTH = 20, 120      # never wider than the terminal: a box that wraps looks broken
 
 _UNICODE = {"tl": "╭", "tr": "╮", "bl": "╰", "br": "╯", "h": "─", "v": "│", "lt": "├",
             "rt": "┤", "tt": "┬", "bt": "┴", "x": "┼", "ok": "✔", "warn": "▲", "bad": "✖",
@@ -70,7 +70,9 @@ def detect_color_level(stream: TextIO | None = None, env: Mapping[str, str] | No
     return 1
 
 
-def detect_unicode(stream: TextIO | None = None) -> bool:
+def detect_unicode(stream: TextIO | None = None, env: Mapping[str, str] | None = None) -> bool:
+    if (os.environ if env is None else env).get("ERINIX_ASCII"):
+        return False                       # plain characters only (for fonts that draw symbols too wide)
     stream = sys.stdout if stream is None else stream
     enc = (getattr(stream, "encoding", None) or "").lower().replace("-", "").replace("_", "")
     return enc == "utf8"
@@ -84,7 +86,7 @@ class Theme:
 
     @classmethod
     def from_stream(cls, stream: TextIO | None = None, env: Mapping[str, str] | None = None) -> "Theme":
-        return cls(detect_color_level(stream, env), detect_unicode(stream))
+        return cls(detect_color_level(stream, env), detect_unicode(stream, env))
 
     @property
     def width(self) -> int:

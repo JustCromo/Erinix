@@ -23,7 +23,13 @@
     auto: "Acts automatically",
   };
 
-  const state = { overview: null, alerts: [], filter: "open", csrf: null, version: "", locked: false, error: null, open: {}, lastKey: "" };
+  const LOGIN_MESSAGES = {
+    invalid: "This sign-in link was already used or is not valid.",
+    expired: "This sign-in link has expired.",
+    unavailable: "Erinix could not read its data. Try: erinix doctor",
+  };
+
+  const state = { overview: null, alerts: [], filter: "open", csrf: null, version: "", locked: false, error: null, open: {}, lastKey: "", loginError: "" };
   const app = document.getElementById("app");
 
   // ---------------------------------------------------------------- helpers
@@ -71,7 +77,13 @@
     if (method !== "GET") { headers["Content-Type"] = "application/json"; headers["X-Erinix-CSRF"] = state.csrf || ""; }
     const res = await fetch(path, { method: method, headers: headers, credentials: "same-origin", cache: "no-store", body: body ? JSON.stringify(body) : undefined });
     if (res.status === 401) { state.locked = true; throw new Error("locked"); }
-    if (!res.ok) throw new Error("HTTP " + res.status);
+    if (!res.ok) {
+      let code = "";
+      try { code = (await res.json()).error || ""; } catch (e) { code = ""; }
+      const err = new Error("HTTP " + res.status);
+      err.code = code;
+      throw err;
+    }
     return res.json();
   }
 
@@ -232,7 +244,9 @@
   }
 
   function viewLocked() {
+    const why = state.loginError ? (LOGIN_MESSAGES[state.loginError] || "The sign-in did not work.") : null;
     return h("section", { class: "card lock" }, h("h1", null, "Open Erinix from your terminal"),
+      why ? h("p", { class: "warn", role: "alert" }, why) : null,
       h("p", null, "This page needs a private sign-in link. Run:"), h("p", null, h("code", null, "erinix ui")),
       h("p", { class: "empty" }, "The link works once and expires after two minutes."));
   }
@@ -271,8 +285,31 @@
     if (!document.hidden) refresh();
     window.setTimeout(tick, POLL_MS);
   }
-  window.addEventListener("hashchange", function () { state.lastKey = ""; refresh(); });
+  window.addEventListener("hashchange", function () { state.lastKey = ""; consumeLoginFragment().then(refresh); });
   document.addEventListener("visibilitychange", function () { if (!document.hidden) refresh(); });
+  // The sign-in link carries its token after "#": that part never travels to the server by itself,
+  // so opening the link twice or letting a browser pre-load it cannot use the token up. This page sends it once.
+  // Also runs when a link is pasted into a tab that is already open (only the "#" part changes then).
+  async function consumeLoginFragment() {
+    const m = /^#login=([A-Za-z0-9_-]{20,100})$/.exec(location.hash);
+    if (!m) return;
+    history.replaceState(null, "", location.pathname + location.search);   // the token never stays in the address bar
+    try {
+      await request("POST", "/api/login", { token: m[1] });
+      state.locked = false; state.loginError = ""; state.csrf = null;
+    } catch (err) {
+      // another copy of this page (a double open) may have signed in already: check before giving up
+      await new Promise(function (resolve) { window.setTimeout(resolve, 400); });
+      try { await request("GET", "/api/session"); state.locked = false; state.loginError = ""; }
+      catch (err2) { state.loginError = err.code || "invalid"; state.locked = true; }
+    }
+  }
+
+  async function start() {
+    await consumeLoginFragment();
+    tick();
+  }
+
   window.__erinix = { state: state, refresh: refresh, render: render };
-  tick();
+  start();
 })();

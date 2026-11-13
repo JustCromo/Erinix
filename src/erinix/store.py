@@ -257,16 +257,22 @@ class Store:
             self._conn.execute("INSERT INTO login_tokens VALUES (?,?)", (self._hash(token), now + ttl))
         return token
 
-    def consume_login_token(self, token: str, *, now: float | None = None) -> bool:
-        """True once for a valid, unexpired token; the token is destroyed either way."""
+    def redeem_login_token(self, token: object, *, now: float | None = None) -> str:
+        """'ok' once for a valid token; otherwise 'invalid' (unknown or already used) or 'expired'.
+
+        The token is destroyed either way.
+        """
         now = time.time() if now is None else now
         if not isinstance(token, str) or not 20 <= len(token) <= 100:
-            return False
+            return "invalid"
         digest = self._hash(token)
         with self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             row = self._conn.execute("SELECT expires FROM login_tokens WHERE token_hash=?", (digest,)).fetchone()
             if row is None:
-                return False
+                return "invalid"
             self._conn.execute("DELETE FROM login_tokens WHERE token_hash=?", (digest,))
-            return row["expires"] > now
+            return "ok" if row["expires"] > now else "expired"
+
+    def consume_login_token(self, token: object, *, now: float | None = None) -> bool:
+        return self.redeem_login_token(token, now=now) == "ok"

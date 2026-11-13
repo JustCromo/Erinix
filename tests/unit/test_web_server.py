@@ -57,11 +57,17 @@ def call(server, method, path, *, headers=None, body=None, host="default", raw_h
     return r.status, {k.lower(): v for k, v in r.getheaders()}, data
 
 
+def login(server, token, **over):
+    headers = {"Content-Type": "application/json", **over}
+    return call(server, "POST", "/api/login", headers={k: v for k, v in headers.items() if v is not None},
+                body=token if isinstance(token, bytes) else json.dumps({"token": token}).encode())
+
+
 def sign_in(server):
     with Store(server.db_path) as s:
         token = s.create_login_token()
-    status, headers, _ = call(server, "GET", f"/login?t={token}")
-    assert status == 303 and headers["location"] == "/"
+    status, headers, _ = login(server, token)
+    assert status == 200
     cookie = headers["set-cookie"].split(";")[0]
     _, _, data = call(server, "GET", "/api/session", headers={"Cookie": cookie})
     return cookie, json.loads(data)["csrf"]
@@ -148,31 +154,82 @@ def test_api_needs_a_session(dash):
 def test_login_is_one_time_with_safe_cookie_flags(dash):
     with Store(dash.db_path) as s:
         token = s.create_login_token()
-    status, h, _ = call(dash, "GET", f"/login?t={token}")
-    assert status == 303 and h["location"] == "/"
+    status, h, body = login(dash, token)
+    assert status == 200 and json.loads(body) == {"ok": True}
     cookie = h["set-cookie"]
     assert cookie.startswith(COOKIE + "=") and "HttpOnly" in cookie and "SameSite=Strict" in cookie and "Path=/" in cookie
-    assert call(dash, "GET", f"/login?t={token}")[0] == 403                     # a link works once
-    assert token not in cookie and "t=" not in h["location"]
+    assert token not in cookie and token not in body.decode()
+    status, _, body = login(dash, token)                                          # a token works once
+    assert status == 403 and json.loads(body) == {"error": "invalid"}
 
 
-@pytest.mark.parametrize("query", ["", "?t=", "?t=abc", "?t=" + "a" * 300, "?token=x", "?t=%00", "?t=' OR 1=1 --", "?t=a&t=b"])
-def test_bad_login_attempts_are_refused(dash, query):
-    assert call(dash, "GET", "/login" + quote(query, safe="?=&"))[0] in (403, 429)
+def test_opening_the_link_never_uses_the_token_up(dash):
+    """The token travels in the address fragment: a browser opening or pre-loading the page cannot burn it."""
+    with Store(dash.db_path) as s:
+        token = s.create_login_token()
+    for path in (f"/?t={token}", f"/#login={token}", f"/login?t={token}", "/"):
+        call(dash, "GET", path)
+    assert login(dash, token)[0] == 200
 
 
-def test_expired_links_do_not_work(dash):
+def test_the_old_get_login_address_is_gone(dash):
+    with Store(dash.db_path) as s:
+        token = s.create_login_token()
+    assert call(dash, "GET", f"/login?t={token}")[0] == 404
+    assert login(dash, token)[0] == 200                                           # and it did not touch the token
+
+
+@pytest.mark.parametrize("token", ["", "abc", "a" * 300, None, 5, ["x"], {"a": 1}, "' OR '1'='1' --" + "a" * 10, "%00" * 12, "\x00" * 30])
+def test_bad_login_attempts_are_refused(dash, token):
+    status, _, body = login(dash, token)
+    assert status == 403 and json.loads(body) == {"error": "invalid"}
+
+
+@pytest.mark.parametrize("body,code", [(b"not json", 400), (b"[1]", 403), (b"{}", 403), (b"[" * 300 + b"]" * 300, 403)])
+def test_login_input_validation(dash, body, code):
+    assert login(dash, body)[0] == code
+
+
+def test_login_needs_json_and_a_local_origin(dash):
+    with Store(dash.db_path) as s:
+        token = s.create_login_token()
+    assert login(dash, token, **{"Content-Type": "text/plain"})[0] == 415
+    assert login(dash, token, Origin="http://evil.example.com")[0] == 403
+    assert login(dash, token, Origin="null")[0] == 403
+    assert login(dash, b"{" + b" " * 3000 + b"}")[0] == 413
+    assert login(dash, token, Origin=f"http://127.0.0.1:{dash.port}")[0] == 200   # still unused after all the refusals
+
+
+def test_expired_links_say_so(dash):
     with Store(dash.db_path) as s:
         token = s.create_login_token(ttl=-1)
-    assert call(dash, "GET", f"/login?t={token}")[0] == 403
+    status, _, body = login(dash, token)
+    assert status == 403 and json.loads(body) == {"error": "expired"}
 
 
 def test_repeated_failures_are_rate_limited(dash):
-    codes = [call(dash, "GET", "/login?t=" + "z" * 30)[0] for _ in range(14)]
+    codes = [login(dash, "z" * 30)[0] for _ in range(14)]
     assert codes[:10] == [403] * 10 and 429 in codes[10:]
     with Store(dash.db_path) as s:
         token = s.create_login_token()
-    assert call(dash, "GET", f"/login?t={token}")[0] == 429                      # even a good link waits
+    assert login(dash, token)[0] == 429                                           # even a good link waits
+
+
+def test_unreadable_store_is_reported_as_unavailable(dash):
+    dash.db_path.chmod(0o644)
+    status, _, body = login(dash, "a" * 43)
+    assert status == 503 and json.loads(body) == {"error": "unavailable"}
+    assert "store could not be opened" in (dash.db_path.parent / "server.log").read_text()
+
+
+def test_the_server_log_never_contains_secrets(dash):
+    with Store(dash.db_path) as s:
+        token = s.create_login_token()
+    login(dash, token)
+    login(dash, token)
+    log = (dash.db_path.parent / "server.log").read_text()
+    assert "login ok" in log and "login refused: invalid" in log and token not in log
+    assert oct((dash.db_path.parent / "server.log").stat().st_mode & 0o777) == "0o600"
 
 
 def test_sessions_expire_and_are_limited(dash):
@@ -273,10 +330,10 @@ def test_post_input_validation(dash):
     assert len(json.loads(call(dash, "GET", "/api/alerts?status=all", headers={"Cookie": cookie})[2])["alerts"]) == 1
 
 
-def test_nothing_is_logged(dash, capsys):
+def test_nothing_is_printed(dash, capsys):
     with Store(dash.db_path) as s:
         token = s.create_login_token()
-    call(dash, "GET", f"/login?t={token}")
+    login(dash, token)
     out = capsys.readouterr()
     assert token not in out.out + out.err
 

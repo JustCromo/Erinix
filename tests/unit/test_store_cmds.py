@@ -155,18 +155,31 @@ def running_dashboard(private_state):
     server.server_close()
 
 
-def test_ui_prints_a_one_time_link_that_signs_in(capsys, running_dashboard):
-    code, out, _ = run(capsys, "ui", "--no-browser")
+def test_ui_prints_a_one_time_link_that_signs_in(capsys, running_dashboard, monkeypatch):
+    opened = []
+    monkeypatch.setattr(store_cmds, "open_url", lambda url: opened.append(url) or True)
+    code, out, _ = run(capsys, "ui")
     assert code == 0 and "works once" in out
     url = next(line for line in out.splitlines() if line.startswith("http://127.0.0.1:"))
-    assert f":{running_dashboard.port}/login?t=" in url
-    path = url.split(str(running_dashboard.port), 1)[1]
-    conn = http.client.HTTPConnection("127.0.0.1", running_dashboard.port, timeout=5)
-    conn.request("GET", path, headers={"Host": f"127.0.0.1:{running_dashboard.port}"})
-    assert conn.getresponse().status == 303
-    conn = http.client.HTTPConnection("127.0.0.1", running_dashboard.port, timeout=5)
-    conn.request("GET", path, headers={"Host": f"127.0.0.1:{running_dashboard.port}"})
-    assert conn.getresponse().status == 403                                              # the link worked once
+    assert url.startswith(f"http://127.0.0.1:{running_dashboard.port}/#login=") and opened == [url]
+    assert "?t=" not in url                                                              # the token rides in the fragment
+    token = url.split("#login=", 1)[1]
+    host = f"127.0.0.1:{running_dashboard.port}"
+    for expected in (200, 403):
+        conn = http.client.HTTPConnection("127.0.0.1", running_dashboard.port, timeout=5)
+        conn.request("POST", "/api/login", body=json.dumps({"token": token}), headers={"Host": host, "Content-Type": "application/json"})
+        assert conn.getresponse().status == expected                                     # worked once, then never again
+
+
+def test_ui_no_browser_does_not_open_anything(capsys, running_dashboard, monkeypatch):
+    monkeypatch.setattr(store_cmds, "open_url", lambda url: pytest.fail("must not open a browser"))
+    assert run(capsys, "ui", "--no-browser")[0] == 0
+
+
+def test_ui_says_so_when_no_browser_can_be_opened(capsys, running_dashboard, monkeypatch):
+    monkeypatch.setattr(store_cmds, "open_url", lambda url: False)
+    code, out, _ = run(capsys, "ui")
+    assert code == 0 and "copy the link" in out
 
 
 def test_ui_port_validation(capsys):
@@ -228,3 +241,22 @@ def test_a_long_run_of_digits_is_an_id_prefix_not_a_list_number(capsys, private_
     code, out, _ = run(capsys, "alert", "123456", "--json")
     assert code == 0 and json.loads(out)["headline"] == "Numeric id"
     assert run(capsys, "alert", "1")[0] == 0                                           # and 1 is still the first alert
+
+
+@pytest.mark.parametrize("columns", [30, 36, 45, 60, 80, 105, 140])
+@pytest.mark.parametrize("command", [("status",), ("alerts",), ("alerts", "--all"), ("alert", "1"), ("alert", "1", "--tech"), ("alert", "3", "--tech"), ("sources",)])
+def test_nothing_is_ever_wider_than_the_terminal(capsys, monkeypatch, columns, command):
+    demo(capsys)
+    monkeypatch.setattr("erinix.ui.theme.Theme.width", property(lambda self: max(20, min(120, columns))))
+    code, out, _ = run(capsys, *command)
+    assert code == 0
+    widest = max(len(line) for line in out.splitlines())
+    assert widest <= columns, f"{command} at {columns} columns: a line is {widest} wide"
+
+
+def test_wrapped_advice_keeps_every_word_and_space(capsys, monkeypatch):
+    demo(capsys)
+    for columns in (30, 36, 50, 105):
+        monkeypatch.setattr("erinix.ui.theme.Theme.width", property(lambda self, c=columns: c))
+        out = run(capsys, "alert", "1")[1]
+        assert "Add --tech for the technical details, or dismiss 1 to hide it." in " ".join(out.split()), columns

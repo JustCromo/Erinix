@@ -20,15 +20,20 @@ const overview = (over = {}) => ({
   sources: [{ name: "SSH logins", state: "ok" }, { name: "Caddy log", state: "missing", detail: "not set up" }],
   blind_spots: ["Caddy log: not set up"], version: "9.9.9", ...over });
 
-async function run({ hash = "#/", data = {}, status = 200, reject = false } = {}) {
+async function run({ hash = "#/", data = {}, status = 200, reject = false, needsLogin = false, login = "ok", preSignedIn = false, wait = 150 } = {}) {
   const dom = new JSDOM(html, { url: "http://127.0.0.1:8421/" + hash, runScripts: "outside-only", pretendToBeVisual: true });
   const w = dom.window, calls = [];
   const live = { overview: overview(), alerts: [alert()], ...data };
+  let signedIn = !needsLogin || preSignedIn;
   w.fetch = async (path, opts = {}) => {
     calls.push({ path, method: opts.method || "GET", headers: opts.headers || {}, body: opts.body });
     if (reject) throw new TypeError("network down");
     const ok = (body, st = 200) => ({ ok: st < 400, status: st, json: async () => body });
-    if (status === 401) return ok({ error: "locked" }, 401);
+    if (path === "/api/login") {
+      if (login === "ok") { signedIn = true; return ok({ ok: true }); }
+      return ok({ error: login }, login === "unavailable" ? 503 : 403);
+    }
+    if (status === 401 || !signedIn) return ok({ error: "locked" }, 401);
     if (path.startsWith("/api/session")) return ok({ csrf: "tok", version: "9.9.9" });
     if (path.startsWith("/api/overview")) return ok(live.overview);
     if (path.startsWith("/api/alerts/") && path.endsWith("/status")) return ok({ ok: true });
@@ -36,7 +41,7 @@ async function run({ hash = "#/", data = {}, status = 200, reject = false } = {}
     return ok({}, 404);
   };
   w.eval(script);
-  await new Promise(r => setTimeout(r, 150));
+  await new Promise(r => setTimeout(r, wait));
   return { w, calls, live, close: () => w.close() };
 }
 const checks = {};
@@ -116,6 +121,39 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
   const t = await run({ hash: "#/sources" });
   checks.sources_page = t.w.document.querySelectorAll("table tbody tr").length === 2 && text(t.w, "table").includes("Blind") && text(t.w, "#app").includes("Live monitoring");
   t.close();
+}
+{ // sign-in: the token rides in the address fragment and is sent once, by the page
+  const token = "T".repeat(43);
+  const t = await run({ hash: "#login=" + token, needsLogin: true });
+  const logins = t.calls.filter(c => c.path === "/api/login");
+  checks.login_sent_once = logins.length === 1 && logins[0].method === "POST" && logins[0].body === JSON.stringify({ token }) && logins[0].headers["Content-Type"] === "application/json";
+  checks.login_token_removed_from_address = t.w.location.hash === "" && !t.w.location.href.includes(token);
+  checks.login_token_never_in_urls = t.calls.every(c => !c.path.includes(token));
+  checks.login_then_dashboard = text(t.w, ".hero h1") === "1 thing needs attention" && !t.w.document.querySelector(".lock");
+  t.close();
+  // a duplicate open: the token is already used, but another copy of the page signed in
+  const d = await run({ hash: "#login=" + token, needsLogin: true, login: "invalid", preSignedIn: true, wait: 900 });
+  checks.login_duplicate_open_still_works = text(d.w, ".hero h1") === "1 thing needs attention" && !d.w.document.querySelector(".lock");
+  d.close();
+  for (const [code, words] of [["invalid", "already used"], ["expired", "expired"], ["unavailable", "could not read"]]) {
+    const f = await run({ hash: "#login=" + token, needsLogin: true, login: code, wait: 900 });
+    checks["login_" + code + "_message"] = text(f.w, ".lock .warn").includes(words) && text(f.w, ".lock").includes("erinix ui");
+    checks["login_" + code + "_token_gone"] = f.w.location.hash === "";
+    f.close();
+  }
+  // a link pasted into a tab that is already open only changes the "#" part: it must still sign in
+  const p = await run({ needsLogin: true });
+  checks.locked_before_paste = !!p.w.document.querySelector(".lock");
+  p.w.location.hash = "#login=" + token;
+  await new Promise(r => setTimeout(r, 400));
+  checks.login_by_pasting_into_open_tab = text(p.w, ".hero h1") === "1 thing needs attention" && p.w.location.hash === "" && p.calls.filter(c => c.path === "/api/login").length === 1;
+  p.close();
+  // things that look like a token but are not: never sent
+  for (const bad of ["#login=short", "#login=" + "x".repeat(200), "#login=" + "a".repeat(30) + "<b>", "#login="]) {
+    const b = await run({ hash: bad, needsLogin: true });
+    checks["login_ignores_" + bad.slice(0, 18)] = b.calls.every(c => c.path !== "/api/login") && !!b.w.document.querySelector(".lock");
+    b.close();
+  }
 }
 console.log(JSON.stringify({ checks }));
 process.exit(0);

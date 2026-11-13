@@ -119,6 +119,20 @@ class DashboardServer(ThreadingHTTPServer):
             self.failures = [t for t in self.failures if now - t < 60]
             return len(self.failures) >= LOGIN_FAILURES
 
+    def note(self, message: str) -> None:
+        """One line in server.log (private file). Never carries tokens, addresses or alert text."""
+        path = self.db_path.parent / "server.log"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+        try:
+            flags |= os.O_TRUNC if path.exists() and path.stat().st_size > 65536 else os.O_APPEND
+            fd = os.open(path, flags, 0o600)
+            try:
+                os.write(fd, f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n".encode())
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+
     def note_failure(self, now: float | None = None) -> None:
         with self.lock:
             self.failures.append(time.time() if now is None else now)
@@ -182,33 +196,64 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send(200, body, kind)
             if path == "/healthz":
                 return self._send(200, b"ok", "text/plain; charset=utf-8")
-            if path == "/login":
-                return self._login(query)
             if path.startswith("/api/"):
                 return self._api_get(path, query)
             return self._error(404)
+        if self.command == "POST" and path == "/api/login":
+            return self._login()
         if self.command == "POST" and path.startswith("/api/"):
             return self._api_post(path)
         self._error(405)
 
     do_GET = do_HEAD = do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _route
 
-    def _login(self, query: dict[str, list[str]]) -> None:
+    def _read_json(self) -> object | None:
+        """The JSON body of a POST, or None after an error answer has been sent."""
+        if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+            self._error(415)
+            return None
+        if self.headers.get("Transfer-Encoding"):
+            self._error(400)
+            return None
+        try:
+            length = int(self.headers.get("Content-Length", "-1"))
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_BODY:
+            self._error(413 if length > MAX_BODY else 400)
+            return None
+        try:
+            return json.loads(self.rfile.read(length))
+        except (ValueError, RecursionError):
+            self._error(400, "Invalid JSON")
+            return None
+
+    def _login(self) -> None:
+        """Sign in with the one-time token. The page (not the address) sends it, so merely
+        opening a link twice, or a browser pre-loading it, can never use the token up."""
         if self.server.too_many_failures():
             return self._error(429, "Too many attempts. Try again in a minute.")
-        token = (query.get("t") or [""])[0]
-        ok = False
+        origin = self.headers.get("Origin")
+        if origin is not None and origin not in self.server.allowed_origins:
+            return self._error(403, "Request refused")
+        body = self._read_json()
+        if body is None:
+            return
+        token = body.get("token") if isinstance(body, dict) else None
         try:
             with Store(self.server.db_path) as store:
-                ok = store.consume_login_token(token)
+                outcome = store.redeem_login_token(token)
         except StoreError:
-            ok = False
-        if not ok:
+            self.server.note("login: the store could not be opened")
+            return self._json(503, {"error": "unavailable"})
+        if outcome != "ok":
             self.server.note_failure()
-            return self._error(403, "This link is not valid any more. Run: erinix ui")
+            self.server.note(f"login refused: {outcome}")
+            return self._json(403, {"error": outcome})
         sid, _ = self.server.new_session()
+        self.server.note("login ok")
         cookie = f"{COOKIE}={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}"
-        self._send(303, b"", "text/plain; charset=utf-8", {"Location": "/", "Set-Cookie": cookie})
+        self._send(200, b'{"ok": true}', "application/json; charset=utf-8", {"Set-Cookie": cookie})
 
     # --------------------------------------------------------------------- API
     def _open(self, *, write: bool = False) -> Store | None:
@@ -260,20 +305,9 @@ class _Handler(BaseHTTPRequestHandler):
         if not (path.startswith(prefix) and path.endswith(suffix)):
             return self._error(404)
         alert_id = path[len(prefix):-len(suffix)]
-        if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
-            return self._error(415)
-        if self.headers.get("Transfer-Encoding"):
-            return self._error(400)
-        try:
-            length = int(self.headers.get("Content-Length", "-1"))
-        except ValueError:
-            length = -1
-        if not 0 < length <= MAX_BODY:
-            return self._error(413 if length > MAX_BODY else 400)
-        try:
-            body = json.loads(self.rfile.read(length))
-        except (ValueError, RecursionError):
-            return self._error(400, "Invalid JSON")
+        body = self._read_json()
+        if body is None:
+            return
         status = body.get("status") if isinstance(body, dict) else None
         if status not in STATUSES:
             return self._error(400, "Unknown status")
