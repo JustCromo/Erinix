@@ -124,7 +124,7 @@
 
   function techRow(label, value) { return [h("dt", null, label), h("dd", null, value)]; }
 
-  function alertCard(a) {
+  function alertCard(a, standalone) {
     const t = a.technical || {};
     const progress = a.progress;
     const details = h("details", { class: "more" }, h("summary", null, "See more"),
@@ -144,7 +144,7 @@
     details.addEventListener("toggle", function () { state.open[a.id] = details.open; });
     const bar = progress ? h("div", { class: "bar", "aria-hidden": "true" }) : null;
     if (bar) { const fill = h("span"); fill.style.width = Math.round(100 * progress.done / Math.max(1, progress.total)) + "%"; bar.appendChild(fill); }
-    return h("article", { class: "alert sev-" + sev(a.severity) + (a.status === "dismissed" ? " is-dismissed" : "") },
+    return h("article", { class: "alert sev-" + sev(a.severity) + (standalone === true ? " glass" : "") + (a.status === "dismissed" ? " is-dismissed" : "") },
       h("div", { class: "alert-head" }, badge(a.severity), h("h3", null, a.headline),
         h("time", { datetime: new Date(a.updated * 1000).toISOString(), title: when(a.updated) }, timeAgo(a.updated))),
       a.why ? h("p", { class: "why" }, a.why) : null,
@@ -172,6 +172,20 @@
     const max = Math.max(1, Math.max.apply(null, activity.map(function (p) { return p.events; })));
     const step = W / Math.max(1, activity.length - 1);
     const pts = activity.map(function (p, i) { return (i * step).toFixed(1) + "," + (H - 4 - (p.events / max) * (H - 14)).toFixed(1); });
+    const defs = document.createElementNS(ns, "defs");
+    const grad = document.createElementNS(ns, "linearGradient");
+    grad.setAttribute("id", "spark-fill"); grad.setAttribute("x1", "0"); grad.setAttribute("y1", "0"); grad.setAttribute("x2", "0"); grad.setAttribute("y2", "1");
+    ["spark-stop-a", "spark-stop-b"].forEach(function (cls, i) {
+      const stop = document.createElementNS(ns, "stop");
+      stop.setAttribute("offset", String(i)); stop.setAttribute("class", cls);
+      grad.appendChild(stop);
+    });
+    defs.appendChild(grad);
+    svg.appendChild(defs);
+    const area = document.createElementNS(ns, "path");
+    area.setAttribute("d", "M0," + (H - 4) + " L" + pts.join(" L") + " L" + W + "," + (H - 4) + " Z");
+    area.setAttribute("fill", "url(#spark-fill)");
+    svg.appendChild(area);
     const line = document.createElementNS(ns, "polyline");
     line.setAttribute("points", pts.join(" "));
     svg.appendChild(line);
@@ -195,34 +209,51 @@
   }
 
   // ------------------------------------------------------------------- views
+  function statTile(label, value, note, tone) {
+    return h("div", { class: "stat glass " + tone }, h("span", { class: "stat-label" }, label), h("strong", null, value), note ? h("span", { class: "stat-note" }, note) : null);
+  }
+
   function viewOverview(o) {
     const st = STATES[o.state] || STATES.stopped;
-    const sub = o.open.total + " open " + plural(o.open.total, "alert", "alerts") + " · " + o.events_24h.toLocaleString() + " events checked in the last 24 hours";
+    const n = o.open.total;
+    const worst = o.open.critical ? "critical" : o.open.high ? "high" : o.open.medium ? "medium" : o.open.low ? "low" : null;
+    const watching = o.sources.filter(function (x) { return x.state === "ok"; }).length;
+    const blind = o.sources.length - watching;
+    const sub = n === 0 ? "All quiet. " + o.events_24h.toLocaleString() + " events checked in the last 24 hours."
+      : n + " open " + plural(n, "alert", "alerts") + " · " + o.events_24h.toLocaleString() + " events checked in the last 24 hours";
     return [
-      h("section", { class: "hero state-" + (STATES[o.state] ? o.state : "stopped") },
-        h("div", { class: "hero-icon", "aria-hidden": "true" }, st.icon),
-        h("div", null, h("h1", null, o.headline), h("p", null, sub))),
+      h("section", { class: "hero glass state-" + (STATES[o.state] ? o.state : "stopped") },
+        h("div", { class: "hero-body" },
+          h("div", { class: "hero-icon", "aria-hidden": "true" }, st.icon),
+          h("div", null, h("p", { class: "eyebrow" }, st.label), h("h1", null, o.headline), h("p", { class: "lead" }, sub),
+            n ? h("a", { class: "btn primary", href: "#/alerts" }, "Review " + n + " " + plural(n, "alert", "alerts")) : null)),
+        h("img", { class: "hero-hog", src: "/static/hedgehog.svg", alt: "" })),
+      h("div", { class: "stats" },
+        statTile("Open alerts", String(n), worst ? SEVERITY[worst].label + " is the highest level" : "Nothing open", worst ? "sev-" + worst : "sev-low"),
+        statTile("Events checked", o.events_24h.toLocaleString(), "in the last 24 hours", "sev-low"),
+        statTile("Watching", watching + " of " + o.sources.length, blind ? blind + " " + plural(blind, "blind spot", "blind spots") : "No blind spots", blind ? "sev-medium" : "sev-low")),
       h("div", { class: "grid" },
-        h("section", { class: "card span-2" }, h("h2", null, "Needs attention"),
+        h("section", { class: "card glass" }, h("h2", null, "Needs attention"),
           o.attention.length ? h("div", { class: "stack" }, o.attention.map(alertCard)) : h("p", { class: "empty" }, "Nothing needs your attention."),
           o.open.total > o.attention.length ? h("p", null, h("a", { href: "#/alerts" }, "See all " + o.open.total + " alerts")) : null),
-        h("section", { class: "card" }, h("h2", null, "Last 24 hours"), sparkline(o.activity),
-          h("div", { class: "numbers" },
-            h("div", null, h("strong", null, o.events_24h.toLocaleString()), h("span", null, "events checked")),
-            h("div", null, h("strong", null, o.alerts_24h.toLocaleString()), h("span", null, plural(o.alerts_24h, "alert raised", "alerts raised"))))),
-        h("section", { class: "card" }, h("h2", null, "What Erinix is watching"), sourceList(o))),
+        h("div", { class: "side" },
+          h("section", { class: "card glass" }, h("h2", null, "Last 24 hours"), sparkline(o.activity),
+            h("div", { class: "numbers" },
+              h("div", null, h("strong", null, o.events_24h.toLocaleString()), h("span", null, "events checked")),
+              h("div", null, h("strong", null, o.alerts_24h.toLocaleString()), h("span", null, plural(o.alerts_24h, "alert raised", "alerts raised"))))),
+          h("section", { class: "card glass" }, h("h2", null, "What Erinix is watching"), sourceList(o)))),
     ];
   }
 
   function viewAlerts(o) {
     const tabs = [["open", "Open"], ["dismissed", "Dismissed"], ["all", "All"]];
     return [
-      h("div", { class: "tabs", role: "group", "aria-label": "Filter alerts" }, tabs.map(function (t) {
+      h("div", { class: "tabs glass", role: "group", "aria-label": "Filter alerts" }, tabs.map(function (t) {
         return h("button", { type: "button", "aria-pressed": state.filter === t[0] ? "true" : "false",
           onclick: function () { state.filter = t[0]; state.lastKey = ""; refresh(); } }, t[1]);
       })),
-      state.alerts.length ? h("div", { class: "stack" }, state.alerts.map(alertCard))
-        : h("div", { class: "card" }, h("p", { class: "empty" }, state.filter === "open" ? "Nothing needs your attention." : "No alerts here.")),
+      state.alerts.length ? h("div", { class: "stack" }, state.alerts.map(function (a) { return alertCard(a, true); }))
+        : h("div", { class: "card glass" }, h("p", { class: "empty" }, state.filter === "open" ? "Nothing needs your attention." : "No alerts here.")),
     ];
   }
 
@@ -232,20 +263,20 @@
     });
     const mode = o.demo ? "Demo data (simulated attacks)" : o.mode === "live" ? "Live monitoring" : "Not monitoring";
     return [
-      h("section", { class: "card" }, h("h2", null, "Sources"),
+      h("section", { class: "card glass" }, h("h2", null, "Sources"),
         rows.length ? h("table", null, h("thead", null, h("tr", null, h("th", null, "Source"), h("th", null, "Status"), h("th", null, "Details"))), h("tbody", null, rows))
           : h("p", { class: "empty" }, "No sources are configured yet.")),
-      h("section", { class: "card", style: null }, h("h2", null, "Blind spots"),
+      h("section", { class: "card glass" }, h("h2", null, "Blind spots"),
         o.blind_spots.length ? h("ul", { class: "plain" }, o.blind_spots.map(function (b) { return h("li", null, h("span", { class: "warn" }, "▲ "), b); }))
           : h("p", { class: "empty" }, "None reported.")),
-      h("section", { class: "card" }, h("h2", null, "About this run"),
+      h("section", { class: "card glass" }, h("h2", null, "About this run"),
         h("dl", { class: "tech" }, techRow("Mode", mode), techRow("Version", o.version), o.since ? techRow("Watching since", when(o.since)) : null)),
     ];
   }
 
   function viewLocked() {
     const why = state.loginError ? (LOGIN_MESSAGES[state.loginError] || "The sign-in did not work.") : null;
-    return h("section", { class: "card lock" }, h("h1", null, "Open Erinix from your terminal"),
+    return h("section", { class: "card glass lock" }, h("img", { class: "lock-hog", src: "/static/hedgehog.svg", alt: "" }), h("h1", null, "Open Erinix from your terminal"),
       why ? h("p", { class: "warn", role: "alert" }, why) : null,
       h("p", null, "This page needs a private sign-in link. Run:"), h("p", null, h("code", null, "erinix ui")),
       h("p", { class: "empty" }, "The link works once and expires after two minutes."));
@@ -267,7 +298,7 @@
     }
     if (!o) {
       pill.className = "pill state-stopped"; pill.textContent = state.error ? "Offline" : "Connecting…"; banner.hidden = true; count.hidden = true;
-      app.replaceChildren(h("section", { class: "card" }, h("p", { class: "empty" }, state.error || "Connecting…")));
+      app.replaceChildren(h("section", { class: "card glass" }, h("p", { class: "empty" }, state.error || "Connecting…")));
       return;
     }
     const st = STATES[o.state] || STATES.stopped;
@@ -278,7 +309,7 @@
     count.hidden = !o.open.total;
     count.textContent = String(o.open.total);
     const body = view === "alerts" ? viewAlerts(o) : view === "sources" ? viewSources(o) : viewOverview(o);
-    app.replaceChildren.apply(app, [state.error ? h("div", { class: "card", role: "alert" }, state.error) : null].concat(body).filter(Boolean));
+    app.replaceChildren.apply(app, [state.error ? h("div", { class: "card glass", role: "alert" }, state.error) : null].concat(body).filter(Boolean));
   }
 
   function tick() {

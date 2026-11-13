@@ -25,6 +25,13 @@ def test_svg_is_valid_self_contained_and_deterministic():
     assert len(root.findall("{http://www.w3.org/2000/svg}rect")) > 100 and svg == assets.logo_svg()
 
 
+def test_hedgehog_without_background_is_cropped_and_transparent():
+    svg = assets.hedgehog_svg()
+    root = ET.fromstring(svg)
+    assert root.attrib["viewBox"] == "0 5 32 22" and "rx=" not in svg and "#1f1b24" not in svg and "<script" not in svg
+    assert assets.logo_svg(background=False) == svg and assets.logo_svg() != svg
+
+
 @pytest.mark.parametrize("size", [32, 64, 256])
 def test_png_is_valid(size):
     png = assets.logo_png(size)

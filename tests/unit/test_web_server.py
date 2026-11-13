@@ -101,7 +101,7 @@ def test_the_page_is_public_with_strict_headers(dash):
     assert "unsafe-inline" not in csp and "unsafe-eval" not in csp and "*" not in csp
     assert h["x-content-type-options"] == "nosniff" and h["x-frame-options"] == "DENY" and h["referrer-policy"] == "no-referrer"
     assert h["cache-control"] == "no-store" and "python" not in h.get("server", "").lower()
-    for path, kind in (("/static/app.js", "javascript"), ("/static/style.css", "css"), ("/static/logo.svg", "svg"), ("/favicon.svg", "svg")):
+    for path, kind in (("/static/app.js", "javascript"), ("/static/style.css", "css"), ("/static/logo.svg", "svg"), ("/static/hedgehog.svg", "svg"), ("/favicon.svg", "svg")):
         s, hh, b = call(dash, "GET", path)
         assert s == 200 and kind in hh["content-type"] and b
 
