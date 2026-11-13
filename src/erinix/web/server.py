@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlsplit
 from erinix import __version__, assets
 from erinix.history import state_dir
 from erinix.store import STATUSES, Store, StoreError, default_db_path
-from erinix.summary import build_overview, empty_overview, humanize
+from erinix.summary import build_overview, empty_overview, humanize_full
 
 DEFAULT_PORT = 8421
 SESSION_TTL = 8 * 3600
@@ -296,14 +296,33 @@ class _Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     return self._error(400, "Invalid limit")
                 rows = [] if store is None else store.list_alerts(status, limit=limit)
-                return self._json(200, {"alerts": [humanize(r) for r in rows]})
+                return self._json(200, {"alerts": [humanize_full(store, r) for r in rows]})
             if path.startswith("/api/alerts/"):
                 row = None if store is None else store.get_alert(path[len("/api/alerts/"):])
-                return self._json(200, humanize(row)) if row else self._error(404)
+                return self._json(200, humanize_full(store, row)) if row else self._error(404)
+            if path == "/api/events":
+                return self._events(store, query)
             return self._error(404)
         finally:
             if store is not None:
                 store.close()
+
+    def _events(self, store: Store | None, query: dict[str, list[str]]) -> None:
+        """The live stream: events newer than `after`, or the latest ones on the first call."""
+        try:
+            after = None if "after" not in query else int(query["after"][0])
+            limit = int((query.get("limit") or ["100"])[0])
+        except ValueError:
+            return self._error(400, "Invalid number")
+        if (after is not None and not 0 <= after < 2**62) or not -(2**62) < limit < 2**62 \
+                or (query.get("suspicious") or ["0"])[0] not in ("0", "1"):
+            return self._error(400, "Invalid request")
+        if store is None:
+            return self._json(200, {"events": [], "last_id": 0})
+        rows = store.list_events(after=after, limit=limit, suspicious_only=(query.get("suspicious") or ["0"])[0] == "1")
+        events = [{"id": r["id"], "time": r["ts"], "kind": r["kind"], "label": r["label"], "summary": r["summary"], "remote": r["remote"],
+                   "alert": r["alert_id"], "step": r["step"], "severity": r["severity"]} for r in rows]
+        return self._json(200, {"events": events, "last_id": store.last_event_id()})
 
     def _api_post(self, path: str) -> None:
         csrf = self._csrf()

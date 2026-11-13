@@ -33,7 +33,11 @@ MAX_LIST = 32
 MAX_LOGIN_TOKENS = 10
 ALERT_RETENTION_DAYS = 30
 STATS_RETENTION_HOURS = 48
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+MAX_EVENTS = 5000              # recent events kept for the live view (events tied to an alert are kept longer)
+PRUNE_EVERY = 200              # inserts between clean-ups
+EVENT_RETENTION_DAYS = 30
+MAX_ID = 2**62                 # beyond any real sequence number; keeps absurd values from reaching SQLite
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS alerts (
@@ -44,12 +48,21 @@ CREATE TABLE IF NOT EXISTS alerts (
     steps_done INTEGER NOT NULL, steps_total INTEGER NOT NULL, step_id TEXT NOT NULL, complete INTEGER NOT NULL,
     mitre TEXT NOT NULL, remote TEXT, anchor_pid INTEGER, revision INTEGER NOT NULL,
     evidence TEXT NOT NULL, detail TEXT NOT NULL,
-    first_seen REAL NOT NULL, updated REAL NOT NULL, status TEXT NOT NULL DEFAULT 'open'
+    first_seen REAL NOT NULL, updated REAL NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+    step_labels TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS alerts_by_status ON alerts(status, updated DESC);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS minute_stats (minute INTEGER PRIMARY KEY, events INTEGER NOT NULL DEFAULT 0, alerts INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS login_tokens (token_hash TEXT PRIMARY KEY, expires REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL, ts REAL NOT NULL, kind TEXT NOT NULL, label TEXT NOT NULL, summary TEXT NOT NULL,
+    remote TEXT, source TEXT NOT NULL DEFAULT '',
+    alert_id TEXT, step TEXT, severity TEXT
+);
+CREATE INDEX IF NOT EXISTS events_by_alert ON events(alert_id);
+CREATE INDEX IF NOT EXISTS events_by_event_id ON events(event_id);
 """
 
 
@@ -83,11 +96,14 @@ class Store:
     def __init__(self, path: Path | str | None = None, *, readonly: bool = False) -> None:
         self.path = Path(path) if path is not None else default_db_path()
         self.readonly = readonly
+        self._inserts = 0
         if readonly:
             if not self.path.exists():
                 raise StoreError("no data yet")
             _check_private(self.path.parent, directory=True)
             _check_private(self.path, directory=False)
+            if self._version(self.path) < SCHEMA_VERSION:
+                Store(self.path).close()                       # an older store: upgrade it in place (same user, private file)
             uri = f"file:{quote(str(self.path))}?mode=ro"
             self._conn = sqlite3.connect(uri, uri=True, timeout=5)
         else:
@@ -99,10 +115,26 @@ class Store:
             _check_private(self.path, directory=False)
             self._conn = sqlite3.connect(str(self.path), timeout=5)
             self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_SCHEMA)
+            self._migrate()
             self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             self._conn.commit()
         self._conn.row_factory = sqlite3.Row
+
+    @staticmethod
+    def _version(path: Path) -> int:
+        probe = sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True, timeout=5)
+        try:
+            return int(probe.execute("PRAGMA user_version").fetchone()[0])
+        finally:
+            probe.close()
+
+    def _migrate(self) -> None:
+        """Bring an older store up to date. Columns are only ever added."""
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(alerts)")}
+        if "step_labels" not in columns:
+            self._conn.execute("ALTER TABLE alerts ADD COLUMN step_labels TEXT NOT NULL DEFAULT '[]'")
 
     def close(self) -> None:
         self._conn.close()
@@ -117,34 +149,35 @@ class Store:
     def upsert_alert(self, alert: Alert, *, now: float | None = None) -> None:
         now = time.time() if now is None else now
         seen = alert.wall_ns / 1e9 if alert.wall_ns else now
-        row = (
-            _clip(alert.alert_id, 64), _clip(alert.rule_id, 120), _clip(alert.kind, 20),
-            _clip(alert.title), _clip(alert.why), json.dumps([_clip(s, 400) for s in alert.next_steps[:MAX_LIST]]),
-            _clip(alert.description), alert.severity.value, alert.response.value,
-            int(alert.steps_done), int(alert.steps_total), _clip(alert.step_id, 120), int(alert.complete),
-            json.dumps([_clip(m, 20) for m in alert.mitre[:MAX_LIST]]),
-            None if alert.remote_addr is None else str(alert.remote_addr),
-            alert.anchor.pid if alert.anchor else None, int(alert.revision),
-            json.dumps([[_clip(step, 120), [_clip(i, 64) for i in ids[:MAX_LIST]]] for step, ids in alert.evidence[:MAX_LIST]]),
-            _clip(alert.detail), seen, seen,
-        )
+        values = {
+            "alert_id": _clip(alert.alert_id, 64), "rule_id": _clip(alert.rule_id, 120), "kind": _clip(alert.kind, 20),
+            "title": _clip(alert.title), "why": _clip(alert.why),
+            "next_steps": json.dumps([_clip(s, 400) for s in alert.next_steps[:MAX_LIST]]),
+            "description": _clip(alert.description), "severity": alert.severity.value, "response": alert.response.value,
+            "steps_done": int(alert.steps_done), "steps_total": int(alert.steps_total), "step_id": _clip(alert.step_id, 120),
+            "complete": int(alert.complete), "mitre": json.dumps([_clip(m, 20) for m in alert.mitre[:MAX_LIST]]),
+            "remote": None if alert.remote_addr is None else str(alert.remote_addr),
+            "anchor_pid": alert.anchor.pid if alert.anchor else None, "revision": int(alert.revision),
+            "evidence": json.dumps([[_clip(step, 120), [_clip(i, 64) for i in ids[:MAX_LIST]]] for step, ids in alert.evidence[:MAX_LIST]]),
+            "detail": _clip(alert.detail), "first_seen": seen, "updated": seen,
+            "step_labels": json.dumps([_clip(l, 120) for l in alert.step_labels[:MAX_LIST]]),
+        }
         with self._conn:
-            existing = self._conn.execute("SELECT revision, status, first_seen FROM alerts WHERE alert_id=?",
-                                          (row[0],)).fetchone()
+            existing = self._conn.execute("SELECT revision, status FROM alerts WHERE alert_id=?", (values["alert_id"],)).fetchone()
             if existing is None:
-                self._conn.execute("INSERT INTO alerts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'open')", row)
+                names = ", ".join(values)
+                marks = ", ".join(f":{k}" for k in values)
+                self._conn.execute(f"INSERT INTO alerts ({names}, status) VALUES ({marks}, 'open')", values)
                 return
-            status = "open" if int(alert.revision) > existing["revision"] else existing["status"]   # it grew: show it again
-            self._conn.execute(
-                """UPDATE alerts SET rule_id=?, kind=?, title=?, why=?, next_steps=?, description=?, severity=?,
-                   response=?, steps_done=?, steps_total=?, step_id=?, complete=?, mitre=?, remote=?, anchor_pid=?,
-                   revision=?, evidence=?, detail=?, updated=?, status=? WHERE alert_id=?""",
-                (*row[1:17], row[17], row[18], row[20], status, row[0]))
+            values["status"] = "open" if int(alert.revision) > existing["revision"] else existing["status"]   # it grew: show it again
+            changing = [k for k in values if k not in ("alert_id", "first_seen")]
+            self._conn.execute(f"UPDATE alerts SET {', '.join(f'{k}=:{k}' for k in changing)} WHERE alert_id=:alert_id", values)
 
     @staticmethod
     def _alert_dict(row: sqlite3.Row) -> dict:
         data = dict(row)
-        for key in ("next_steps", "mitre", "evidence"):
+        data.setdefault("step_labels", "[]")
+        for key in ("next_steps", "mitre", "evidence", "step_labels"):
             try:
                 data[key] = json.loads(data[key])
             except ValueError:
@@ -198,11 +231,75 @@ class Store:
                                (now - ALERT_RETENTION_DAYS * 86400,))
             self._conn.execute("DELETE FROM minute_stats WHERE minute<?", (int(now // 60) - STATS_RETENTION_HOURS * 60,))
             self._conn.execute("DELETE FROM login_tokens WHERE expires<?", (now,))
+        self.prune_events(now=now)
 
     def reset(self) -> None:
         with self._conn:
-            for table in ("alerts", "minute_stats", "meta", "login_tokens"):
+            for table in ("alerts", "minute_stats", "meta", "login_tokens", "events"):
                 self._conn.execute(f"DELETE FROM {table}")
+
+    # ------------------------------------------------------------------ events
+    def add_event(self, *, event_id: str, ts: float, kind: str, label: str, summary: str, remote: str | None = None,
+                  source: str = "", alert_id: str | None = None, step: str | None = None, severity: str | None = None) -> int:
+        """Record one event for the live view. Returns its sequence number (always growing)."""
+        with self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO events (event_id, ts, kind, label, summary, remote, source, alert_id, step, severity) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (_clip(event_id, 64), float(ts), _clip(kind, 40), _clip(label, 80), _clip(summary, 400),
+                 None if remote is None else _clip(remote, 64), _clip(source, 20),
+                 None if alert_id is None else _clip(alert_id, 64), None if step is None else _clip(step, 120),
+                 severity if severity in SEVERITY_RANK else None))
+        self._inserts += 1
+        if self._inserts % PRUNE_EVERY == 0:
+            self.prune_events(now=ts)
+        return int(cur.lastrowid)
+
+    def link_events(self, event_ids: list[str], alert_id: str, step: str, severity: str) -> None:
+        """Mark events as part of an attack (a step that needed several hits is only known once it is complete)."""
+        if severity not in SEVERITY_RANK or not event_ids:
+            return
+        with self._conn:
+            for event_id in event_ids[:MAX_LIST]:
+                self._conn.execute("UPDATE events SET alert_id=?, step=?, severity=? WHERE event_id=? AND (alert_id IS NULL OR alert_id=?)",
+                                   (_clip(alert_id, 64), _clip(step, 120), severity, _clip(event_id, 64), _clip(alert_id, 64)))
+
+    @staticmethod
+    def _event_dict(row: sqlite3.Row) -> dict:
+        return dict(row)
+
+    def list_events(self, *, after: int | None = None, limit: int = 100, suspicious_only: bool = False) -> list[dict]:
+        """Events in order. `after` gives only newer ones; without it, the latest `limit`."""
+        limit = max(1, min(int(limit), 500))
+        where = "alert_id IS NOT NULL" if suspicious_only else "1=1"
+        if after is None:
+            rows = self._conn.execute(f"SELECT * FROM events WHERE {where} ORDER BY id DESC LIMIT ?", (limit,)).fetchall()[::-1]
+        else:
+            rows = self._conn.execute(f"SELECT * FROM events WHERE id>? AND {where} ORDER BY id ASC LIMIT ?", (min(int(after), MAX_ID), limit)).fetchall()
+        return [self._event_dict(r) for r in rows]
+
+    def last_event_id(self) -> int:
+        row = self._conn.execute("SELECT MAX(id) FROM events").fetchone()
+        return int(row[0] or 0)
+
+    def events_for_alert(self, alert_id: str, *, limit: int = 60) -> list[dict]:
+        rows = self._conn.execute("SELECT * FROM events WHERE alert_id=? ORDER BY id DESC LIMIT ?",
+                                  (_clip(alert_id, 64), max(1, min(int(limit), 200)))).fetchall()[::-1]
+        return [self._event_dict(r) for r in rows]
+
+    def events_by_event_id(self, event_ids: list[str]) -> dict[str, dict]:
+        found: dict[str, dict] = {}
+        for event_id in event_ids[:MAX_LIST * 4]:
+            row = self._conn.execute("SELECT * FROM events WHERE event_id=? ORDER BY id DESC LIMIT 1", (_clip(event_id, 64),)).fetchone()
+            if row is not None:
+                found[event_id] = self._event_dict(row)
+        return found
+
+    def prune_events(self, *, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        with self._conn:
+            top = self._conn.execute("SELECT MAX(id) FROM events").fetchone()[0] or 0
+            self._conn.execute("DELETE FROM events WHERE alert_id IS NULL AND id<=?", (top - MAX_EVENTS,))
+            self._conn.execute("DELETE FROM events WHERE ts<?", (now - EVENT_RETENTION_DAYS * 86400,))
 
     # ------------------------------------------------------------------- stats
     def bump(self, *, events: int = 0, alerts: int = 0, now: float | None = None) -> None:

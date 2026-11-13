@@ -84,17 +84,17 @@ MATCH_FIELDS: Mapping[EventType, Mapping[str, str]] = MappingProxyType({
     EventType.AUTH_FAILURE: {"service": _STR},
     EventType.AUTH_SUCCESS: {"service": _STR},
     EventType.WEB_REQUEST: {"contains": _STR, "user_agent_contains": _STR, "method": _STR,
-                            "status": _INT, "path": _STR, "path_prefix": _STR},
+                            "status": _INT, "path": _STR, "path_prefix": _STR, "path_not": _STR},
 })
 
 _ABSOLUTE_FIELDS = frozenset({"exe", "exe_not", "parent_exe", "ancestor_exe", "path",
-                              "exe_prefix", "path_prefix"})
+                              "exe_prefix", "path_prefix", "path_not"})
 
 _REMOTE_IP_EVENTS = frozenset({EventType.NET_CONNECT, EventType.NET_ACCEPT, EventType.AUTH_FAILURE,
                                EventType.AUTH_SUCCESS, EventType.WEB_REQUEST})
 _AUTH_EVENTS = frozenset({EventType.AUTH_FAILURE, EventType.AUTH_SUCCESS})
 _NO_PROCESS_EVENTS = _AUTH_EVENTS | {EventType.WEB_REQUEST}     # events with no process attached
-_WEB_TEXT_FIELDS = frozenset({"contains", "user_agent_contains", "path", "path_prefix"})
+_WEB_TEXT_FIELDS = frozenset({"contains", "user_agent_contains", "path", "path_prefix", "path_not"})
 MIN_SUBSTRING = 3          # shorter substrings would match almost everything
 
 
@@ -107,6 +107,7 @@ class Step:
     response: Response
     count: int
     match: Mapping[str, Any]
+    label: str = ""                       # plain-language name of this step, shown in the live timeline
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,7 +270,7 @@ def _common(raw: Mapping[str, Any], where: str) -> tuple[str, tuple[str, ...]]:
     return description, tuple(dict.fromkeys(mitre_raw))
 
 
-MAX_TITLE, MAX_WHY, MAX_NEXT_ITEMS, MAX_NEXT = 120, 400, 6, 200
+MAX_TITLE, MAX_WHY, MAX_NEXT_ITEMS, MAX_NEXT, MAX_LABEL = 120, 400, 6, 200, 100
 
 
 def _plain_text(value: object, where: str, limit: int) -> str:
@@ -313,8 +314,9 @@ def _parse_step(raw: object, index: int, where: str, default: Response, link: Li
     w = f"{where}, step {index}"
     if not isinstance(raw, dict):
         raise RuleError(f"{w}: must be a table")
-    _check_keys(raw, {"id", "event", "severity", "response", "count", "match"}, w)
+    _check_keys(raw, {"id", "event", "severity", "response", "count", "match", "label"}, w)
     step_id = _ident(raw, w)
+    label = _plain_text(raw["label"], f"{w}, label", MAX_LABEL) if "label" in raw else ""
     event = _enum(EventType, raw.get("event"), w, "event")
     if event not in MATCH_FIELDS:
         raise RuleError(f"{w}: event {event.value} cannot be used in rules")
@@ -328,7 +330,7 @@ def _parse_step(raw: object, index: int, where: str, default: Response, link: Li
     if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= MAX_COUNT:
         raise RuleError(f"{w}: 'count' must be an integer from 1 to {MAX_COUNT}")
     match = _parse_match(event, raw.get("match"), w)
-    return Step(step_id, event, severity, response, count, match)
+    return Step(step_id, event, severity, response, count, match, label)
 
 
 def _parse_chain(raw: dict) -> Chain:

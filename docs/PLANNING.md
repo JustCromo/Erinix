@@ -270,6 +270,9 @@ Development order: event model and process tree (done), rules (done), correlatio
 | 2026-11-13 | Alerts carry plain-language text written in the rule (`title`, `why`, `next`); technical details sit behind "See more" / `--tech` | Easy to read first, nothing technical lost |
 | 2026-11-13 | Dashboard: loopback only; login by a one-time link from `erinix ui` whose token rides in the address fragment and is sent once by the page (opening or pre-loading the link cannot use it up); host check, CSRF header, strict CSP, plain JavaScript that never builds HTML | A local web page must not become the easiest way in, and a one-time link must survive a double open |
 | 2026-11-13 | `erinix install-app` adds a launcher, a menu entry and the icon under the user's home; no venv activation, no root | Use Erinix like a normal app |
+| 2026-11-14 | The store keeps recent events (bounded ring, longer for events tied to an alert); every event is recorded and linked to the attack step it belongs to | The live view and "what happened, step by step" need the events, not only the last alert state |
+| 2026-11-14 | The dashboard polls (overview each second, events twice a second) instead of using a push channel | Simple and robust with the standard library; measured delay about 0.3 s. A push channel can replace it later |
+| 2026-11-14 | Chain steps carry a plain-language `label`; web rules can exclude ordinary files with `path_not` | Readable timelines; browsers and bots always ask for favicon.ico and robots.txt, which must not count as probing |
 
 ### Still to decide or reconfirm
 

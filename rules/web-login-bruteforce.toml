@@ -19,6 +19,7 @@ response = "report_only"
 
 [[chain.step]]
 id = "repeated-failed-logins"
+label = "Many failed website logins"
 event = "web.request"
 severity = "medium"
 count = 8
@@ -29,6 +30,7 @@ status = [400, 401, 403]
 
 [[chain.step]]
 id = "login-worked-after-failures"
+label = "A website login worked"
 event = "web.request"
 severity = "critical"
 [chain.step.match]

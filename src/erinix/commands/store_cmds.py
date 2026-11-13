@@ -23,7 +23,7 @@ from erinix.browser import open_url
 from erinix.commands.registry import Context, UsageError, parse_args
 from erinix.rules import Severity
 from erinix.store import Store, StoreError
-from erinix.summary import ago, build_overview, empty_overview, humanize
+from erinix.summary import ago, build_overview, empty_overview, humanize, humanize_full
 from erinix.ui.render import Seg, box, paint_segs, safe
 from erinix.ui.views import severity_badge
 from erinix.web.server import DEFAULT_PORT, build_id, server_info_path
@@ -182,7 +182,7 @@ def cmd_alerts(ctx: Context, args: list[str]) -> int:
     _, flags, _ = parse_args(args, flags=("--all", "--dismissed", "--json"), max_positional=0)
     status = "all" if "--all" in flags else "dismissed" if "--dismissed" in flags else "open"
     store = _open(ctx)
-    rows = [humanize(r) for r in _numbered(store, status)] if store else []
+    rows = [humanize_full(store, r) for r in _numbered(store, status)] if store else []
     if store:
         store.close()
     if "--json" in flags:
@@ -205,6 +205,32 @@ def cmd_alerts(ctx: Context, args: list[str]) -> int:
     return 0
 
 
+def _clock(epoch: float | None) -> str:
+    return time.strftime("%H:%M:%S", time.localtime(epoch)) if epoch else " " * 8
+
+
+def _happened_lines(ctx: Context, a: dict, width: int) -> list[list[Seg]]:
+    """The attack step by step: what is done, what is happening now, what is still to come."""
+    lines: list[list[Seg]] = []
+    inner = max(24, width - 4)
+    if a.get("steps"):
+        for step in a["steps"]:
+            mark, role = {"done": ("✔" if ctx.theme.unicode else "v", "ok"), "current": ("…", "warn")}.get(step["state"], ("·", "dim"))
+            head = [Seg(mark + " ", role, True), Seg(_clock(step["time"]), "brown"), Seg("  "),
+                    Seg(safe(step["label"]), None if step["state"] != "pending" else "dim", step["state"] == "current")]
+            if step["state"] == "current":
+                head.append(Seg("  waiting…", "warn"))
+            lines += _wrap_segs(head, inner)
+            if step["detail"]:
+                text = (f"{step['count']} times, last: " if step["count"] > 1 else "") + step["detail"]
+                lines += [[Seg(" " * 12 + safe(chunk), "dim")] for chunk in textwrap.wrap(text, max(16, inner - 12)) or [""]]
+    elif a.get("timeline"):
+        for event in a["timeline"][-8:]:
+            text = f"{event['label']}: {event['summary']}"
+            lines += _wrap_segs([Seg(_clock(event["time"]), "brown"), Seg("  " + safe(text))], inner)
+    return lines
+
+
 def alert_sections(ctx: Context, a: dict, width: int, tech: bool) -> list:
     g = ctx.theme.glyph
     steps: list[list[Seg]] = []
@@ -213,6 +239,9 @@ def alert_sections(ctx: Context, a: dict, width: int, tech: bool) -> list:
         wrapped[0][0] = Seg(f"{i}. " + wrapped[0][0].text.lstrip(), None)
         steps += wrapped
     sections = [(None, _wrap(a["why"], width))]
+    happened = _happened_lines(ctx, a, width)
+    if happened:
+        sections.append(([Seg(f"{g('star')} WHAT HAPPENED", "accent", True)], happened))
     if steps:
         sections.append(([Seg(f"{g('star')} WHAT TO DO", "accent", True)], steps))
     if a["progress"]:
@@ -247,11 +276,11 @@ def cmd_alert(ctx: Context, args: list[str]) -> int:
         return 1
     try:
         row = _resolve(ctx, store, pos[0], "dismissed" if "--dismissed" in flags else "open")
+        a = humanize_full(store, row) if row is not None else None
     finally:
         store.close()
-    if row is None:
+    if a is None:
         return 1
-    a = humanize(row)
     if "--json" in flags:
         _json(ctx, a)
         return 0
@@ -291,6 +320,50 @@ def cmd_reopen(ctx: Context, args: list[str]) -> int:
     return _set_status(ctx, args, "open")
 
 
+SEV_EVENT_ROLE = {"low": "ok", "medium": "warn", "high": "bad", "critical": "bad"}
+
+
+def cmd_live(ctx: Context, args: list[str]) -> int:
+    """Follow events as they happen (like `tail -f`): suspicious ones stand out."""
+    _, flags, opts = parse_args(args, flags=("--suspicious",), options=("--for",), max_positional=0)
+    if ctx.emitter is not None:
+        ctx.error("'live' keeps running: start it from a normal terminal")
+        return 2
+    seconds = _number(opts, "--for", 0, 0, 86400) or None
+    store = _open(ctx)
+    if store is None:
+        ctx.error("no data yet (try: demo --live, in another terminal)")
+        return 1
+    only = "--suspicious" in flags
+    started = time.monotonic()
+    last = 0
+
+    def show(rows: list[dict]) -> None:
+        for e in rows:
+            flagged = e["alert_id"] is not None
+            role = SEV_EVENT_ROLE.get(e["severity"] or "", "accent") if flagged else None
+            tail = f"  {e['remote']}" if e["remote"] else ""
+            _hint(ctx, Seg(("! " if flagged else "  "), role, True), Seg(_clock(e["ts"]) + "  ", "brown"),
+                  Seg(e["label"].ljust(19), role or "dim"), Seg(safe(e["summary"]) + tail, None if flagged else "dim"))
+        if rows and hasattr(ctx.out, "flush"):
+            ctx.out.flush()
+
+    try:
+        first = store.list_events(limit=12, suspicious_only=only)
+        show(first)
+        last = store.last_event_id()
+        while seconds is None or time.monotonic() - started < seconds:
+            time.sleep(0.4)
+            fresh = store.list_events(after=last, limit=200, suspicious_only=only)
+            show(fresh)
+            last = max([last] + [e["id"] for e in fresh]) if fresh else store.last_event_id()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        store.close()
+    return 0
+
+
 def cmd_sources(ctx: Context, args: list[str]) -> int:
     _, flags, _ = parse_args(args, flags=("--json",), max_positional=0)
     store = _open(ctx)
@@ -317,7 +390,11 @@ def cmd_demo(ctx: Context, args: list[str]) -> int:
     from erinix.engine import Correlator
     from erinix.rules import RuleError, load_rules
 
-    _, flags, _ = parse_args(args, flags=("--reset", "--force"), max_positional=0)
+    _, flags, opts = parse_args(args, flags=("--reset", "--force", "--live"), options=("--speed", "--for"), max_positional=0)
+    live = "--live" in flags
+    if live and ctx.emitter is not None:
+        ctx.error("'demo --live' keeps running: start it from a normal terminal, in a second window next to the dashboard")
+        return 2
     store = _open(ctx, write=True)
     if store is None:
         return 1
@@ -334,6 +411,8 @@ def cmd_demo(ctx: Context, args: list[str]) -> int:
         except RuleError as exc:
             ctx.error(str(exc))
             return 2
+        if live:
+            return _demo_live(ctx, store, ruleset, opts)
         now = time.time()
         total_events = total_alerts = 0
         for name, minutes_ago in (("web", 14), ("ssh", 9), ("revshell", 5), ("shadow", 2)):
@@ -361,6 +440,45 @@ def cmd_demo(ctx: Context, args: list[str]) -> int:
     _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg(f"Demo data loaded: {total_alerts} alert updates from {total_events} simulated events."))
     _hint(ctx, Seg("Try ", "dim"), Seg("status", "accent"), Seg(", ", "dim"), Seg("alerts", "accent"), Seg(" or ", "dim"), Seg("ui", "accent"),
           Seg(" (the web dashboard).", "dim"))
+    return 0
+
+
+def _number(opts: dict[str, str], name: str, default: float, low: float, high: float) -> float:
+    try:
+        value = float(opts.get(name, default))
+    except ValueError:
+        raise UsageError(f"{name} needs a number") from None
+    if not low <= value <= high:
+        raise UsageError(f"{name} must be between {low:g} and {high:g}")
+    return value
+
+
+def _demo_live(ctx: Context, store: Store, ruleset, opts: dict[str, str]) -> int:
+    """Play a staged attack in real time, so the live views have something to show."""
+    from erinix.demo import live as live_demo
+    from erinix.engine import Correlator
+    from erinix.recorder import Recorder
+
+    speed = _number(opts, "--speed", 1.0, 0.2, 10)
+    duration = _number(opts, "--for", 0, 0, 86400) or None
+    recorder = Recorder(store, Correlator(ruleset))
+    now = time.time()
+    store.set_meta("mode", "demo")
+    store.set_meta("started", now)
+    store.set_meta("sources", [
+        {"name": "Web server log (Caddy)", "state": "ok", "detail": "demo"},
+        {"name": "SSH logins", "state": "ok", "detail": "demo"},
+        {"name": "Programs and commands", "state": "ok", "detail": "demo"},
+        {"name": "Kernel-level events", "state": "blind", "detail": "need root"},
+    ])
+    _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True),
+          Seg("Live demo running: normal traffic with a staged attack. Open the dashboard (erinix ui, page Live) and watch. Ctrl-C stops it."))
+    try:
+        result = live_demo.run(recorder.feed, speed=speed, duration=duration,
+                               tick=lambda: store.set_meta("heartbeat", time.time()))
+    except KeyboardInterrupt:
+        result = {"events": store.last_event_id()}
+    _hint(ctx, Seg("Stopped after ", "dim"), Seg(str(result["events"]), "accent"), Seg(" events.", "dim"))
     return 0
 
 

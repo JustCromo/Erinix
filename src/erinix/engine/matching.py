@@ -51,6 +51,8 @@ _CHECKS: dict[str, _Check] = {
     or (isinstance(pl, WebInfo) and pl.method in w),
     "path": lambda w, p, pl, t: (isinstance(pl, FileInfo) and pl.path.value in w)
     or (isinstance(pl, WebInfo) and pl.decoded_path in w),
+    # web only: "any path EXCEPT these" (browsers and bots always ask for a favicon or robots.txt: not a probe)
+    "path_not": lambda w, p, pl, t: isinstance(pl, WebInfo) and pl.decoded_path not in w,
     "path_prefix": lambda w, p, pl, t: (isinstance(pl, FileInfo) and pl.path.value.startswith(w))
     or (isinstance(pl, WebInfo) and pl.decoded.startswith(w)),
     "contains": lambda w, p, pl, t: isinstance(pl, WebInfo) and any(s in pl.decoded for s in w),

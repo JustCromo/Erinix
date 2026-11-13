@@ -254,10 +254,11 @@ def build_registry() -> Registry:
         ("dismiss", "Hide an alert you have dealt with", "dismiss <n>", "Status", sc.cmd_dismiss, ()),
         ("reopen", "Bring a dismissed alert back", "reopen <n>", "Status", sc.cmd_reopen, ()),
         ("sources", "What Erinix watches, and its blind spots", "sources [--json]", "Status", sc.cmd_sources, ("--json",)),
+        ("live", "Follow events as they happen", "live [--suspicious]", "Status", sc.cmd_live, ("--suspicious", "--for")),
         ("ui", "Open the web dashboard", "ui [--no-browser] [--port N]", "Dashboard", sc.cmd_ui, ("--no-browser", "--port")),
         ("serve", "Run the dashboard in this terminal", "serve [--port N]", "Dashboard", sc.cmd_serve, ("--port",)),
         ("stop", "Stop the dashboard", "stop", "Dashboard", sc.cmd_stop, ()),
-        ("demo", "Load simulated attacks to try Erinix", "demo [--reset]", "Demo", sc.cmd_demo, ("--reset",)),
+        ("demo", "Load simulated attacks to try Erinix", "demo [--reset | --live]", "Demo", sc.cmd_demo, ("--reset", "--live", "--speed", "--for", "--force")),
         ("install-app", "Add Erinix to your app menu (no venv needed)", "install-app [--terminal NAME]", "Setup", sc.cmd_install_app, ("--terminal", "--force")),
         ("uninstall-app", "Remove the app menu entry", "uninstall-app", "Setup", sc.cmd_uninstall_app, ()),
     ):

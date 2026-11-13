@@ -41,3 +41,4 @@ class Alert:
     title: str = ""                 # plain-language headline from the rule ({remote} still in it)
     why: str = ""
     next_steps: tuple[str, ...] = ()
+    step_labels: tuple[str, ...] = ()   # plain-language name of every step of the chain, in order

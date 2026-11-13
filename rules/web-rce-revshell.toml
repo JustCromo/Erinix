@@ -21,6 +21,7 @@ justification = "A web server or application server has no legitimate reason to 
 
 [[chain.step]]
 id = "service-spawns-shell"
+label = "A web program starts a command line"
 event = "process.exec"
 severity = "medium"
 [chain.step.match]
@@ -36,6 +37,7 @@ exe = [
 
 [[chain.step]]
 id = "shell-connects-outbound"
+label = "The command line connects to another machine"
 event = "net.connect"
 severity = "high"
 response = "auto"
@@ -44,6 +46,7 @@ remote_external = true
 
 [[chain.step]]
 id = "escalation-to-root"
+label = "It gains full control (root)"
 event = "priv.uid_change"
 severity = "critical"
 response = "interactive"

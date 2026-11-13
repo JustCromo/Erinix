@@ -63,4 +63,4 @@ def test_real_page_script_in_jsdom():
     assert out.returncode == 0, out.stderr
     checks = json.loads(out.stdout)["checks"]
     failed = [name for name, ok in checks.items() if not ok]
-    assert len(checks) >= 25 and failed == []
+    assert len(checks) >= 60 and failed == []
