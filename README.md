@@ -38,6 +38,13 @@ erinix alerts      # the list; then: erinix alert 1   (add --tech for the techni
 erinix ui          # open the web dashboard in your browser
 ```
 
+To watch it work in real time, open the dashboard on the **Live** page and, in a second terminal, play a staged attack:
+
+```bash
+erinix demo --live    # normal traffic with an attack in the middle (Ctrl-C stops it)
+erinix live           # the same stream of events, in the terminal (--suspicious shows only attack events)
+```
+
 Inside the console, type the same commands without `erinix`.
 
 ## The dashboard
@@ -45,7 +52,8 @@ Inside the console, type the same commands without `erinix`.
 `erinix ui` starts a small local web server (127.0.0.1 only) and opens your browser with a private
 sign-in link that works once. The dashboard shows the same facts as the console: a plain-language
 summary, the alerts with "See more" for technical details, and what Erinix is watching (and what it
-cannot see). Stop it with `erinix stop`. The look is a forest night with the hedgehog's orange and glass panels; for a warmer, brown-based palette change `data-palette="bosco"` to `"sottobosco"` in `src/erinix/web/static/index.html`. If the link says it was already used, run `erinix ui` again for a new one.
+cannot see). The **Live** page updates by itself, about twice a second: the events as they happen on the left, and on
+the right every attack in progress with its steps shown as done, happening now or still to come. Stop it with `erinix stop`. The look is a forest night with the hedgehog's orange and glass panels; for a warmer, brown-based palette change `data-palette="bosco"` to `"sottobosco"` in `src/erinix/web/static/index.html`. If the link says it was already used, run `erinix ui` again for a new one.
 
 If the box-drawing symbols look misaligned in your terminal font, run with plain characters: `ERINIX_ASCII=1 erinix`.
 

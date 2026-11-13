@@ -19,7 +19,8 @@ Include what you found, how to reproduce it and the version (`erinix --version`)
   never lives in a directory controlled by an unprivileged user.
 - The web dashboard listens on the local machine only, signs you in with a one-time link, checks the
   address it was called by, protects changes against forged requests and loads nothing from other sites.
-- The alert store is a private file readable only by its owner.
+- The alert store is a private file readable only by its owner. It also keeps the most recent events for the live
+  view; they can contain text an attacker typed (a URL, a user name), so every screen shows them as plain text only.
 - No secrets belong in the repository, in rules or in documentation.
 
 ## Supported versions

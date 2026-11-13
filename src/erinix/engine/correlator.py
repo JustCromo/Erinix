@@ -254,6 +254,7 @@ class Correlator:
             process=event.process.key if event.process else None, anchor=inst.anchor,
             remote_addr=remote, mono_ns=event.mono_ns, wall_ns=event.wall_ns,
             title=chain.title, why=chain.why, next_steps=chain.next_steps,
+            step_labels=tuple(s.label for s in chain.steps),
         )
 
     def _indicator_alert(self, ind: Indicator, event: Event) -> Alert | None:

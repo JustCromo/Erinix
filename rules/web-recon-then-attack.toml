@@ -18,14 +18,18 @@ response = "report_only"
 
 [[chain.step]]
 id = "probing-for-pages"
+label = "Searching for hidden pages"
 event = "web.request"
 severity = "medium"
 count = 10
 [chain.step.match]
 status = [404]
+# Browsers and search bots ask for these on every visit; a site without them answers 404. Not a probe.
+path_not = ["/favicon.ico", "/robots.txt", "/sitemap.xml", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/browserconfig.xml", "/ads.txt"]
 
 [[chain.step]]
 id = "payload-after-probing"
+label = "Sending attack code"
 event = "web.request"
 severity = "high"
 [chain.step.match]

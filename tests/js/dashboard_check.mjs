@@ -36,6 +36,11 @@ async function run({ hash = "#/", data = {}, status = 200, reject = false, needs
     if (status === 401 || !signedIn) return ok({ error: "locked" }, 401);
     if (path.startsWith("/api/session")) return ok({ csrf: "tok", version: "9.9.9" });
     if (path.startsWith("/api/overview")) return ok(live.overview);
+    if (path.startsWith("/api/events")) {
+      const q = new URL(path, "http://x").searchParams, all = live.events || [], limit = Number(q.get("limit") || 100);
+      const list = q.has("after") ? all.filter(e => e.id > Number(q.get("after"))).slice(0, limit) : all.slice(-limit);
+      return ok({ events: list, last_id: live.lastId !== undefined ? live.lastId : (all.length ? all[all.length - 1].id : 0) });
+    }
     if (path.startsWith("/api/alerts/") && path.endsWith("/status")) return ok({ ok: true });
     if (path.startsWith("/api/alerts")) return ok({ alerts: live.alerts });
     return ok({}, 404);
@@ -155,6 +160,106 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
     checks["login_ignores_" + bad.slice(0, 18)] = b.calls.every(c => c.path !== "/api/login") && !!b.w.document.querySelector(".lock");
     b.close();
   }
+}
+{ // ---- the live stream: incremental, pausable, filterable, bounded, safe
+  const now = Date.now() / 1000;
+  const mk = (id, o = {}) => ({ id, time: now - 10 + id / 100, kind: "web.request", label: "Web request", summary: "GET /p" + id + " → 200", remote: "10.0.0.1", alert: null, step: null, severity: null, ...o });
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const events = [mk(1), mk(2), mk(3, { alert: "a".repeat(32), step: "s", severity: "high", label: "Program started", summary: "bash (user 33)" })];
+  const t = await run({ hash: "#/live", data: { events }, wait: 900 });
+  const doc = t.w.document, rows = () => [...doc.querySelectorAll("#feed li.ev")];
+  checks.feed_initial = rows().length === 3 && rows()[0].dataset.id === "3" && rows()[2].dataset.id === "1";
+  checks.feed_flagged = rows()[0].className.includes("flagged") && rows()[0].className.includes("sev-high") && rows()[0].textContent.includes("Part of an attack") && !rows()[1].className.includes("flagged");
+  const firstNode = rows()[0], alertNode = doc.querySelector(".alert");
+  t.live.events.push(mk(4), mk(5));
+  await sleep(900);
+  checks.feed_appends = rows().length === 5 && rows()[0].dataset.id === "5" && rows().includes(firstNode);
+  checks.feed_requests_only_newer = t.calls.some(c => c.path.startsWith("/api/events?after=3"));
+  checks.feed_no_redraw = !alertNode || doc.querySelector(".alert") === alertNode;
+  doc.querySelector('[data-action="pause"]').click();
+  t.live.events.push(mk(6));
+  await sleep(900);
+  checks.feed_pause_holds = rows().length === 5 && doc.querySelector('[data-action="pause"]').textContent === "Resume (1 new)";
+  doc.querySelector('[data-action="pause"]').click();
+  checks.feed_resume_shows = rows().length === 6 && rows()[0].dataset.id === "6" && doc.querySelector('[data-action="pause"]').textContent === "Pause";
+  doc.querySelector('[data-action="only"]').click();
+  checks.feed_only_suspicious = rows().length === 1 && rows()[0].dataset.id === "3" && doc.querySelector('[data-action="only"]').getAttribute("aria-pressed") === "true";
+  t.live.events.push(mk(7));
+  await sleep(900);
+  checks.feed_filter_keeps_filtering = rows().length === 1;
+  doc.querySelector('[data-action="only"]').click();
+  checks.feed_filter_off = rows().length === 7;
+  t.live.events.length = 0; t.live.lastId = 0;
+  await sleep(900);
+  checks.feed_store_cleared = rows().length === 0 && !!doc.querySelector(".ev-empty");
+  checks.feed_polls_twice_a_second = t.calls.filter(c => c.path.startsWith("/api/events")).length >= 5;       // about 8 polls in 4.5 s
+  t.close();
+
+  const evil = '<img src=x onerror="window.__pwned=1">';
+  const many = Array.from({ length: 400 }, (_, i) => mk(i + 1));
+  many[399] = mk(400, { label: evil, summary: evil, remote: evil, alert: "b".repeat(32), step: evil, severity: '"><script>x</script>' });
+  const h = await run({ hash: "#/live", data: { events: many }, wait: 900 });
+  const hd = h.w.document, hrows = () => [...hd.querySelectorAll("#feed li.ev")];
+  checks.feed_hostile_is_text = h.w.__pwned === undefined && hrows()[0].textContent.includes(evil) && hd.querySelectorAll("#feed img, #feed script").length === 0;
+  checks.feed_hostile_severity_falls_back = hrows()[0].className === "ev flagged sev-low";
+  checks.feed_first_fill_is_bounded = hrows().length <= 80;
+  for (let i = 401; i <= 700; i++) h.live.events.push(mk(i));
+  await sleep(1700);
+  checks.feed_flood_is_bounded = hrows().length <= 150 && hrows()[0].dataset.id === "700";
+  h.close();
+}
+{ // ---- steps inside an attack
+  const now = Date.now() / 1000;
+  const steps = [
+    { index: 1, label: "A web program starts a command line", state: "done", time: now - 2, detail: "bash (user 33)", count: 1 },
+    { index: 2, label: "The command line connects <b>out</b>", state: "current", time: null, detail: "", count: 0 },
+    { index: 3, label: "It gains full control (root)", state: "pending", time: null, detail: "", count: 0 }];
+  const a = alert({ steps, timeline: [] });
+  const t = await run({ hash: "#/alerts", data: { alerts: [a] } });
+  const doc = t.w.document;
+  checks.steps_states = doc.querySelectorAll(".tl.done").length === 1 && doc.querySelectorAll(".tl.current").length === 1 && doc.querySelectorAll(".tl.pending").length === 1;
+  checks.steps_content = text(t.w, ".tl.done .tl-label") === "A web program starts a command line" && text(t.w, ".tl.done .tl-detail") === "bash (user 33)" && text(t.w, ".tl.current .tl-wait") === "waiting…" && /\d\d:\d\d:\d\d/.test(text(t.w, ".tl.done time"));
+  checks.steps_fresh_marked = doc.querySelector(".tl.done").className.includes("fresh") && !doc.querySelector(".tl.pending").className.includes("fresh");
+  checks.steps_hostile_label = text(t.w, ".tl.current .tl-label") === "The command line connects <b>out</b>" && doc.querySelectorAll(".timeline b").length === 0;
+  t.close();
+  const many = alert({ steps: [{ index: 1, label: "Many failed logins", state: "done", time: now - 60, detail: "POST /login → 401", count: 8 }], timeline: [] });
+  const c = await run({ hash: "#/alerts", data: { alerts: [many] } });
+  checks.steps_counts_repeats = text(c.w, ".tl-detail") === "8 times · last: POST /login → 401";
+  c.close();
+  const single = alert({ steps: [], progress: null, timeline: [{ id: 1, time: now, label: "File access", summary: "write /etc/shadow by vim", remote: null, step: "x", severity: "high" }] });
+  const s = await run({ hash: "#/alerts", data: { alerts: [single] } });
+  checks.timeline_for_single_events = text(s.w, ".tl-title") === "What was seen" && text(s.w, ".tl-detail") === "write /etc/shadow by vim";
+  s.close();
+}
+{ // ---- the live page, the overview and counters that move in place
+  const now = Date.now() / 1000;
+  const recent = alert({ id: "r".repeat(32), updated: now - 30 }), old = alert({ id: "o".repeat(32), updated: now - 3600, headline: "Old one" });
+  const t = await run({ hash: "#/live", data: { alerts: [recent, old] } });
+  const doc = t.w.document;
+  checks.live_page_lists_recent_attacks_only = doc.querySelectorAll("#app .alert").length === 1 && !text(t.w, "#app").includes("Old one");
+  checks.live_cards_are_compact = !!doc.querySelector(".alert.compact") && !doc.querySelector(".alert.compact .next") && !doc.querySelector(".alert.compact .actions");
+  checks.live_nav_link = !!doc.querySelector('#nav a[data-view="live"]') && doc.querySelector('#nav a[data-view="live"]').getAttribute("aria-current") === "page";
+  t.close();
+  const e = await run({ hash: "#/live", data: { alerts: [] } });
+  checks.live_page_when_quiet = text(e.w, "#app").includes("No attack in progress") && !!e.w.document.querySelector("#feed");
+  e.close();
+  const o = await run({ hash: "#/" });
+  const od = o.w.document;
+  checks.overview_cards_are_full = !!od.querySelector(".alert .next li") && !od.querySelector(".alert.compact");
+  checks.overview_has_a_small_live_feed = !!od.querySelector("#feed") && od.querySelector("#feed").getAttribute("data-limit") === "8" && !!od.querySelector('.feed-card a[href="#/live"]');
+  const card = od.querySelector(".alert");
+  const base = o.live.overview;
+  const same = extra => overview({ since: base.since, attention: base.attention, ...extra });       // everything equal except what moves
+  o.live.overview = same({ events_24h: 1299, alerts_24h: 9 });
+  await o.w.__erinix.refresh();
+  checks.counters_update_in_place = [...od.querySelectorAll('[data-live="events_24h"]')].length >= 2 && [...od.querySelectorAll('[data-live="events_24h"]')].every(el => /1.?299/.test(el.textContent)) && od.querySelector(".alert") === card;
+  o.live.overview = same({ events_24h: 1299, alerts_24h: 9, activity: Array.from({ length: 48 }, (_, i) => ({ t: i * 1800, events: 50 + i, alerts: 0 })) });
+  await o.w.__erinix.refresh();
+  checks.chart_updates_in_place = od.querySelector(".alert") === card && od.querySelectorAll("svg.spark circle").length === 0;
+  o.live.overview = same({ headline: "Needs your attention now", state: "critical", open: { total: 2, low: 0, medium: 0, high: 1, critical: 1 } });
+  await o.w.__erinix.refresh();
+  checks.real_changes_still_redraw = text(o.w, ".hero h1") === "Needs your attention now" && od.querySelector(".alert") !== card;
+  o.close();
 }
 console.log(JSON.stringify({ checks }));
 process.exit(0);

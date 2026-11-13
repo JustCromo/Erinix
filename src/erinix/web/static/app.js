@@ -4,7 +4,10 @@
    textContent / createTextNode, NEVER as HTML, because alert text can contain
    what an attacker typed into a URL, a user name or a user agent. */
 (function () {
-  const POLL_MS = 3000;
+  const POLL_MS = 1000;           // overview, alerts: once a second
+  const FEED_MS = 500;            // the live stream of events: twice a second
+  const FEED_KEEP = 300;
+  const FEED_SHOWN = { overview: 8, live: 150 };
   const SEVERITY = {
     low: { label: "Low", icon: "●" },
     medium: { label: "Medium", icon: "▲" },
@@ -29,7 +32,8 @@
     unavailable: "Erinix could not read its data. Try: erinix doctor",
   };
 
-  const state = { overview: null, alerts: [], filter: "open", csrf: null, version: "", locked: false, error: null, open: {}, lastKey: "", loginError: "" };
+  const state = { overview: null, alerts: [], filter: "open", csrf: null, version: "", locked: false, error: null, open: {}, lastKey: "", loginError: "", renderedView: "",
+    feed: { events: [], lastId: 0, paused: false, pausedAt: null, queued: 0, only: false, loaded: false } };
   const app = document.getElementById("app");
 
   // ---------------------------------------------------------------- helpers
@@ -64,8 +68,10 @@
     return Math.floor(s / 86400) + " d ago";
   }
   function when(epoch) { return new Date(epoch * 1000).toLocaleString(); }
+  function clock(epoch) { return new Date(epoch * 1000).toTimeString().slice(0, 8); }
   function currentView() {
     const hash = location.hash || "#/";
+    if (hash.indexOf("#/live") === 0) return "live";
     if (hash.indexOf("#/alerts") === 0) return "alerts";
     if (hash.indexOf("#/sources") === 0) return "sources";
     return "overview";
@@ -97,11 +103,16 @@
       state.locked = false;
       const overview = await request("GET", "/api/overview");
       let alerts = state.alerts;
-      if (currentView() === "alerts") alerts = (await request("GET", "/api/alerts?status=" + encodeURIComponent(state.filter) + "&limit=100")).alerts;
-      const stable = Object.assign({}, overview); delete stable.heartbeat_age;
-      const key = JSON.stringify([stable, alerts, state.filter, currentView()]);
+      const view = currentView();
+      if (view === "alerts") alerts = (await request("GET", "/api/alerts?status=" + encodeURIComponent(state.filter) + "&limit=100")).alerts;
+      else if (view === "live") alerts = (await request("GET", "/api/alerts?status=open&limit=30")).alerts;
+      // Counters and the chart change all the time: they are updated in place, never by redrawing the page.
+      const stable = Object.assign({}, overview);
+      ["heartbeat_age", "events_24h", "alerts_24h", "activity"].forEach(function (k) { delete stable[k]; });
+      const key = JSON.stringify([stable, alerts, state.filter, view, view === "live" ? inProgress(alerts).map(function (a) { return a.id; }) : null]);
       state.overview = overview; state.alerts = alerts; state.error = null;
       if (key !== state.lastKey) { state.lastKey = key; render(); }
+      updateLive(overview);
     } catch (err) {
       state.error = err.message === "locked" ? null : "Cannot reach Erinix. Is it running? Try: erinix ui";
       state.lastKey = "";
@@ -124,7 +135,7 @@
 
   function techRow(label, value) { return [h("dt", null, label), h("dd", null, value)]; }
 
-  function alertCard(a, standalone) {
+  function alertCard(a, standalone, compact) {
     const t = a.technical || {};
     const progress = a.progress;
     const details = h("details", { class: "more" }, h("summary", null, "See more"),
@@ -144,18 +155,149 @@
     details.addEventListener("toggle", function () { state.open[a.id] = details.open; });
     const bar = progress ? h("div", { class: "bar", "aria-hidden": "true" }) : null;
     if (bar) { const fill = h("span"); fill.style.width = Math.round(100 * progress.done / Math.max(1, progress.total)) + "%"; bar.appendChild(fill); }
-    return h("article", { class: "alert sev-" + sev(a.severity) + (standalone === true ? " glass" : "") + (a.status === "dismissed" ? " is-dismissed" : "") },
+    const fresh = Date.now() / 1000 - a.updated < 4 && a.status === "open";
+    return h("article", { class: "alert sev-" + sev(a.severity) + (standalone === true ? " glass" : "") + (compact ? " compact" : "") + (a.status === "dismissed" ? " is-dismissed" : "") + (fresh ? " fresh" : "") },
       h("div", { class: "alert-head" }, badge(a.severity), h("h3", null, a.headline),
-        h("time", { datetime: new Date(a.updated * 1000).toISOString(), title: when(a.updated) }, timeAgo(a.updated))),
-      a.why ? h("p", { class: "why" }, a.why) : null,
-      a.next_steps && a.next_steps.length ? h("div", { class: "next" }, h("strong", null, "What to do"),
+        h("time", { datetime: new Date(a.updated * 1000).toISOString(), title: when(a.updated), "data-epoch": a.updated }, timeAgo(a.updated))),
+      a.why && !compact ? h("p", { class: "why" }, a.why) : null,
+      timelineView(a),
+      a.next_steps && a.next_steps.length && !compact ? h("div", { class: "next" }, h("strong", null, "What to do"),
         h("ul", null, a.next_steps.map(function (s) { return h("li", null, s); }))) : null,
-      progress ? h("div", { class: "steps" }, progress.complete ? "Attack completed all " + progress.total + " steps" : "Step " + progress.done + " of " + progress.total, bar) : null,
-      details,
-      h("div", { class: "actions" },
+      progress && !compact && !(a.steps && a.steps.length) ? h("div", { class: "steps" }, progress.complete ? "Attack completed all " + progress.total + " steps" : "Step " + progress.done + " of " + progress.total, bar) : null,
+      compact ? h("p", { class: "tl-more" }, h("a", { href: "#/alerts" }, "Details and what to do")) : details,
+      compact ? null : h("div", { class: "actions" },
         a.status === "open"
           ? h("button", { class: "btn", type: "button", onclick: function () { setStatus(a.id, "dismissed"); } }, "Dismiss")
           : h("button", { class: "btn", type: "button", onclick: function () { setStatus(a.id, "open"); } }, "Reopen")));
+  }
+
+  // ---------------------------------------------- what happened, step by step
+  function timelineView(a) {
+    const steps = a.steps || [];
+    const now = Date.now() / 1000;
+    if (steps.length) {
+      return h("div", { class: "timeline-wrap" }, h("strong", { class: "tl-title" }, "What happened, step by step"),
+        h("ol", { class: "timeline" }, steps.map(function (s) {
+          const state_ = ["done", "current", "pending"].indexOf(s.state) >= 0 ? s.state : "pending";
+          const detail = (s.count > 1 ? s.count + " times · last: " : "") + (s.detail || "");
+          return h("li", { class: "tl " + state_ + (s.time && now - s.time < 5 ? " fresh" : "") },
+            h("span", { class: "tl-dot", "aria-hidden": "true" }, state_ === "done" ? "✔" : ""),
+            h("div", { class: "tl-body" },
+              h("div", { class: "tl-head" }, h("span", { class: "tl-label" }, s.label),
+                s.time ? h("time", null, clock(s.time)) : state_ === "current" ? h("span", { class: "tl-wait" }, "waiting…") : null),
+              s.detail ? h("div", { class: "tl-detail mono" }, detail) : null));
+        })));
+    }
+    const seen = (a.timeline || []).slice(-6);
+    if (!seen.length) return null;
+    return h("div", { class: "timeline-wrap" }, h("strong", { class: "tl-title" }, "What was seen"),
+      h("ol", { class: "timeline" }, seen.map(function (e) {
+        return h("li", { class: "tl done" + (now - e.time < 5 ? " fresh" : "") }, h("span", { class: "tl-dot", "aria-hidden": "true" }, "✔"),
+          h("div", { class: "tl-body" }, h("div", { class: "tl-head" }, h("span", { class: "tl-label" }, e.label), h("time", null, clock(e.time))),
+            h("div", { class: "tl-detail mono" }, e.summary)));
+      })));
+  }
+
+  // --------------------------------------------------------- the live stream
+  function visibleEvents() {
+    const f = state.feed;
+    return f.events.filter(function (e) { return (!f.only || e.alert) && (f.pausedAt === null || e.id <= f.pausedAt); });
+  }
+  function feedRow(e, entering) {
+    return h("li", { class: "ev" + (e.alert ? " flagged sev-" + sev(e.severity) : "") + (entering ? " enter" : ""), "data-id": e.id },
+      h("time", null, clock(e.time)), h("span", { class: "ev-label" }, e.label), h("span", { class: "ev-text" }, e.summary),
+      e.remote ? h("span", { class: "ev-remote mono" }, e.remote) : null,
+      e.alert ? h("span", { class: "ev-tag" }, "Part of an attack") : null);
+  }
+  function fillFeed(ul, limit) {
+    const rows = visibleEvents().slice(-limit).reverse();
+    ul.replaceChildren.apply(ul, rows.length ? rows.map(function (e) { return feedRow(e, false); })
+      : [h("li", { class: "ev-empty" }, state.feed.only ? "No suspicious events yet." : "Waiting for events…")]);
+  }
+  function refillFeed() {
+    const ul = document.getElementById("feed");
+    if (ul) fillFeed(ul, Number(ul.getAttribute("data-limit")) || 100);
+  }
+  function insertEvents(fresh) {
+    const ul = document.getElementById("feed");
+    if (!ul) return;
+    const limit = Number(ul.getAttribute("data-limit")) || 100;
+    const shown = fresh.filter(function (e) { return !state.feed.only || e.alert; });
+    if (!shown.length) return;
+    const empty = ul.querySelector(".ev-empty");
+    if (empty) empty.remove();
+    shown.forEach(function (e) { ul.prepend(feedRow(e, true)); });     // newest on top; nothing else is redrawn
+    while (ul.children.length > limit) ul.lastElementChild.remove();
+  }
+  function updateFeedControls() {
+    const f = state.feed;
+    const pause = document.querySelector('[data-action="pause"]'), only = document.querySelector('[data-action="only"]');
+    if (pause) { pause.textContent = f.paused ? "Resume" + (f.queued ? " (" + f.queued + " new)" : "") : "Pause"; pause.setAttribute("aria-pressed", f.paused ? "true" : "false"); }
+    if (only) only.setAttribute("aria-pressed", f.only ? "true" : "false");
+  }
+  function togglePause() {
+    const f = state.feed;
+    f.paused = !f.paused;
+    f.pausedAt = f.paused ? f.lastId : null;
+    if (!f.paused) { f.queued = 0; refillFeed(); }
+    updateFeedControls();
+  }
+  function toggleOnly() { state.feed.only = !state.feed.only; refillFeed(); updateFeedControls(); }
+  function feedControls() {
+    const f = state.feed;
+    return h("div", { class: "feed-controls" },
+      h("span", { class: "live-pill" }, h("span", { class: "live-dot", "aria-hidden": "true" }), "Live"),
+      h("button", { class: "btn small", type: "button", "data-action": "pause", "aria-pressed": f.paused ? "true" : "false", onclick: togglePause }, f.paused ? "Resume" : "Pause"),
+      h("button", { class: "btn small", type: "button", "data-action": "only", "aria-pressed": f.only ? "true" : "false", onclick: toggleOnly }, "Only suspicious"));
+  }
+  function feedCard(limit, full) {
+    const ul = h("ul", { id: "feed", class: "feed", "data-limit": limit });
+    fillFeed(ul, limit);
+    return h("section", { class: "card glass feed-card" + (full ? "" : " compact") },
+      h("div", { class: "card-head" }, h("h2", null, "Live activity"), full ? feedControls() : h("a", { class: "more-link", href: "#/live" }, "Open the live view")), ul);
+  }
+  async function pollFeed() {
+    const f = state.feed;
+    if (state.locked || !state.csrf) return;
+    try {
+      const data = await request("GET", "/api/events" + (f.loaded ? "?after=" + f.lastId + "&limit=200" : "?limit=80"));
+      if (f.loaded && data.last_id < f.lastId) {            // the store was cleared and started again
+        f.events = []; f.lastId = 0; f.loaded = false; f.queued = 0; f.pausedAt = f.paused ? 0 : null;
+        refillFeed();
+        return;
+      }
+      const first = !f.loaded;
+      f.loaded = true;
+      const fresh = data.events.filter(function (e) { return e.id > f.lastId; });
+      if (!fresh.length) { if (first) refillFeed(); return; }
+      f.lastId = fresh[fresh.length - 1].id;
+      f.events = f.events.concat(fresh).slice(-FEED_KEEP);
+      if (first) refillFeed();
+      else if (f.paused) { f.queued += fresh.length; updateFeedControls(); }
+      else insertEvents(fresh);
+    } catch (err) { /* the main refresh shows connection problems */ }
+  }
+  function feedTick() {
+    if (!document.hidden) pollFeed();
+    window.setTimeout(feedTick, FEED_MS);
+  }
+  function inProgress(alerts) {
+    const now = Date.now() / 1000;
+    return alerts.filter(function (a) { return a.status === "open" && now - a.updated < 900; })
+      .sort(function (x, y) { return y.updated - x.updated; });
+  }
+  // numbers, times and the chart move on their own: update them where they are
+  function updateLive(o) {
+    document.querySelectorAll("[data-live]").forEach(function (el) {
+      const v = o[el.getAttribute("data-live")];
+      if (typeof v === "number") el.textContent = v.toLocaleString();
+    });
+    const holder = document.getElementById("spark-holder");
+    if (holder) {
+      const k = JSON.stringify(o.activity);
+      if (holder.getAttribute("data-k") !== k) { holder.setAttribute("data-k", k); holder.replaceChildren(sparkline(o.activity)); }
+    }
+    document.querySelectorAll("time[data-epoch]").forEach(function (el) { el.textContent = timeAgo(Number(el.getAttribute("data-epoch"))); });
   }
 
   function sparkline(activity) {
@@ -209,8 +351,8 @@
   }
 
   // ------------------------------------------------------------------- views
-  function statTile(label, value, note, tone) {
-    return h("div", { class: "stat glass " + tone }, h("span", { class: "stat-label" }, label), h("strong", null, value), note ? h("span", { class: "stat-note" }, note) : null);
+  function statTile(label, value, note, tone, liveKey) {
+    return h("div", { class: "stat glass " + tone }, h("span", { class: "stat-label" }, label), h("strong", liveKey ? { "data-live": liveKey } : null, value), note ? h("span", { class: "stat-note" }, note) : null);
   }
 
   function viewOverview(o) {
@@ -219,8 +361,8 @@
     const worst = o.open.critical ? "critical" : o.open.high ? "high" : o.open.medium ? "medium" : o.open.low ? "low" : null;
     const watching = o.sources.filter(function (x) { return x.state === "ok"; }).length;
     const blind = o.sources.length - watching;
-    const sub = n === 0 ? "All quiet. " + o.events_24h.toLocaleString() + " events checked in the last 24 hours."
-      : n + " open " + plural(n, "alert", "alerts") + " · " + o.events_24h.toLocaleString() + " events checked in the last 24 hours";
+    const sub = [n === 0 ? "All quiet. " : n + " open " + plural(n, "alert", "alerts") + " · ", h("span", { "data-live": "events_24h" }, o.events_24h.toLocaleString()),
+      " events checked in the last 24 hours" + (n === 0 ? "." : "")];
     return [
       h("section", { class: "hero glass state-" + (STATES[o.state] ? o.state : "stopped") },
         h("div", { class: "hero-body" },
@@ -230,18 +372,30 @@
         h("img", { class: "hero-hog", src: "/static/hedgehog.svg", alt: "" })),
       h("div", { class: "stats" },
         statTile("Open alerts", String(n), worst ? SEVERITY[worst].label + " is the highest level" : "Nothing open", worst ? "sev-" + worst : "sev-low"),
-        statTile("Events checked", o.events_24h.toLocaleString(), "in the last 24 hours", "sev-low"),
+        statTile("Events checked", o.events_24h.toLocaleString(), "in the last 24 hours", "sev-low", "events_24h"),
         statTile("Watching", watching + " of " + o.sources.length, blind ? blind + " " + plural(blind, "blind spot", "blind spots") : "No blind spots", blind ? "sev-medium" : "sev-low")),
       h("div", { class: "grid" },
         h("section", { class: "card glass" }, h("h2", null, "Needs attention"),
-          o.attention.length ? h("div", { class: "stack" }, o.attention.map(alertCard)) : h("p", { class: "empty" }, "Nothing needs your attention."),
+          o.attention.length ? h("div", { class: "stack" }, o.attention.map(function (a) { return alertCard(a); })) : h("p", { class: "empty" }, "Nothing needs your attention."),
           o.open.total > o.attention.length ? h("p", null, h("a", { href: "#/alerts" }, "See all " + o.open.total + " alerts")) : null),
         h("div", { class: "side" },
-          h("section", { class: "card glass" }, h("h2", null, "Last 24 hours"), sparkline(o.activity),
+          feedCard(FEED_SHOWN.overview, false),
+          h("section", { class: "card glass" }, h("h2", null, "Last 24 hours"), h("div", { id: "spark-holder", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity)),
             h("div", { class: "numbers" },
-              h("div", null, h("strong", null, o.events_24h.toLocaleString()), h("span", null, "events checked")),
-              h("div", null, h("strong", null, o.alerts_24h.toLocaleString()), h("span", null, plural(o.alerts_24h, "alert raised", "alerts raised"))))),
+              h("div", null, h("strong", { "data-live": "events_24h" }, o.events_24h.toLocaleString()), h("span", null, "events checked")),
+              h("div", null, h("strong", { "data-live": "alerts_24h" }, o.alerts_24h.toLocaleString()), h("span", null, "alerts raised")))),
           h("section", { class: "card glass" }, h("h2", null, "What Erinix is watching"), sourceList(o)))),
+    ];
+  }
+
+  function viewLive(o) {
+    const active = inProgress(state.alerts);
+    return [
+      h("div", { class: "live-grid" },
+        feedCard(FEED_SHOWN.live, true),
+        h("section", { class: "card glass" }, h("h2", null, "Attacks in progress"),
+          active.length ? h("div", { class: "stack" }, active.map(function (a) { return alertCard(a, false, true); }))
+            : h("p", { class: "empty" }, "No attack in progress. Erinix is watching."))),
     ];
   }
 
@@ -308,8 +462,11 @@
     banner.textContent = o.demo ? "Showing demo data: these are simulated attacks, not real monitoring." : "";
     count.hidden = !o.open.total;
     count.textContent = String(o.open.total);
-    const body = view === "alerts" ? viewAlerts(o) : view === "sources" ? viewSources(o) : viewOverview(o);
+    const body = view === "live" ? viewLive(o) : view === "alerts" ? viewAlerts(o) : view === "sources" ? viewSources(o) : viewOverview(o);
+    const y = window.scrollY, same = state.renderedView === view;
     app.replaceChildren.apply(app, [state.error ? h("div", { class: "card glass", role: "alert" }, state.error) : null].concat(body).filter(Boolean));
+    if (same && y) window.scrollTo(0, y);                       // a redraw never throws you back to the top
+    state.renderedView = view;
   }
 
   function tick() {
@@ -339,6 +496,7 @@
   async function start() {
     await consumeLoginFragment();
     tick();
+    feedTick();
   }
 
   window.__erinix = { state: state, refresh: refresh, render: render };

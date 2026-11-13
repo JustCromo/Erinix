@@ -93,3 +93,46 @@ def test_overload_alert_is_readable_too():
         out += c.process(event)
     overload = [a for a in out if a.kind == "engine"]
     assert overload and overload[0].title and overload[0].why and overload[0].next_steps
+
+
+# ------------------------------------------------------------ step labels
+STEP = '''[[chain]]
+id = "c"
+window_seconds = 60
+link = "remote_ip"
+[[chain.step]]
+id = "a"
+{label}event = "web.request"
+severity = "low"
+[chain.step.match]
+status = [404]
+[[chain.step]]
+id = "b"
+event = "web.request"
+severity = "high"
+[chain.step.match]
+status = [200]
+'''
+
+
+def test_step_labels_load(tmp_path):
+    rs = write(tmp_path, STEP.format(label='label = "Looking around"\n'))
+    assert rs.problems == () and [s.label for s in rs.chains[0].steps] == ["Looking around", ""]
+
+
+@pytest.mark.parametrize("label,fragment", [("{x}", "placeholder"), ("", "non-empty"), ("a" * 101, "too long"), ("line\\nbreak", "control characters")])
+def test_bad_step_labels_discard_the_rule(tmp_path, label, fragment):
+    rs = write(tmp_path, STEP.format(label=f'label = "{label}"\n'))
+    assert not rs.chains and fragment in rs.problems[0].message
+
+
+def test_a_label_must_be_a_string(tmp_path):
+    rs = write(tmp_path, STEP.format(label="label = 5\n"))
+    assert not rs.chains and len(rs.problems) == 1
+
+
+def test_every_step_of_every_shipped_chain_has_a_plain_label():
+    for chain in load_rules(RULES).chains:
+        for step in chain.steps:
+            assert 8 <= len(step.label) <= 60 and step.label[0].isupper() and not step.label.endswith("."), (chain.id, step.id)
+            assert not any(j in step.label for j in ("T1", "pid", "uid", "syscall", "regex")), (chain.id, step.id)

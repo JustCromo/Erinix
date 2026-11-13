@@ -208,3 +208,55 @@ def test_web_scenarios_end_to_end(ruleset):
     _, alerts = run(ruleset, sorted(SCENARIOS["web"].build(), key=lambda e: e.mono_ns))
     assert {"web-sqli-attempt", "web-path-traversal", "web-command-injection", "web-template-or-script-injection",
             "web-attack-tool-user-agent", "web-recon-then-attack", "web-login-bruteforce-success"} <= {a.rule_id for a in alerts}
+
+
+# ------------------------------------------------ ordinary 404s are not probing
+def _web_events(ip, paths, status=404, start=0.0):
+    from erinix.demo.scenarios import _caddy
+
+    return [_caddy(ip, "GET", path, status, start + i * 0.1) for i, path in enumerate(paths)]
+
+
+def _alerts(events):
+    from pathlib import Path
+
+    from erinix.engine import Correlator
+    from erinix.rules import load_rules
+
+    c = Correlator(load_rules(Path(__file__).resolve().parents[2] / "rules"))
+    return [a for e in events for a in c.process(e)]
+
+
+@pytest.mark.parametrize("path", ["/favicon.ico", "/robots.txt", "/FAVICON.ICO", "/favicon.ico?v=2", "/%66avicon.ico", "/sitemap.xml",
+                                  "/apple-touch-icon.png", "/ads.txt"])
+def test_common_missing_files_are_not_probing(path):
+    assert _alerts(_web_events("192.168.50.20", [path] * 60)) == []
+
+
+def test_real_probing_still_counts():
+    paths = ["/admin", "/backup", "/.git/config", "/wp-login.php", "/phpmyadmin", "/old", "/test", "/config", "/db", "/.env"]
+    out = _alerts(_web_events("192.168.50.31", paths))
+    assert [(a.rule_id, a.steps_done) for a in out] == [("web-recon-then-attack", 1)]
+
+
+def test_hiding_probes_among_ordinary_files_does_not_help_or_hurt():
+    mixed = []
+    for p in ["/admin", "/backup", "/.git/config", "/wp-login.php", "/phpmyadmin", "/old", "/test", "/config", "/db", "/.env"]:
+        mixed += [p, "/favicon.ico", "/robots.txt"]
+    assert len(_alerts(_web_events("192.168.50.31", mixed))) == 1                   # the 10 real ones still count; the others are ignored
+
+
+def test_path_not_is_only_for_web_rules_and_needs_absolute_paths(tmp_path):
+    def load(body):
+        f = tmp_path / "r.toml"
+        f.write_text("schema = 1\n" + body, encoding="utf-8")
+        f.chmod(0o600)
+        return load_rules(f)
+
+    ok = load('[[indicator]]\nid = "t"\nevent = "web.request"\nseverity = "low"\n[indicator.match]\nstatus = [404]\npath_not = ["/favicon.ico"]\n')
+    assert ok.problems == () and ok.indicators[0].match["path_not"] == ("/favicon.ico",)
+    for bad_body in ('[[indicator]]\nid = "t"\nevent = "web.request"\nseverity = "low"\n[indicator.match]\npath_not = ["favicon.ico"]\n',
+                     '[[indicator]]\nid = "t"\nevent = "process.exec"\nseverity = "low"\n[indicator.match]\npath_not = ["/x"]\n',
+                     '[[indicator]]\nid = "t"\nevent = "web.request"\nseverity = "low"\n[indicator.match]\npath_not = "/x"\n'):
+        rs = load(bad_body)
+        assert not rs.indicators and len(rs.problems) == 1

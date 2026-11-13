@@ -20,6 +20,7 @@ response = "interactive"
 
 [[chain.step]]
 id = "repeated-failures"
+label = "Many failed password attempts"
 event = "auth.failure"
 severity = "medium"
 count = 5
@@ -28,6 +29,7 @@ service = ["sshd"]
 
 [[chain.step]]
 id = "success-after-failures"
+label = "A login worked"
 event = "auth.success"
 severity = "critical"
 [chain.step.match]

@@ -46,6 +46,40 @@ def humanize(row: dict) -> dict:
     }
 
 
+def _steps_and_timeline(store: Store, row: dict) -> tuple[list[dict], list[dict]]:
+    """For a chain: every step as done / current / pending, with the event that completed it.
+    For every alert: the events that belong to it, oldest first."""
+    linked = store.events_for_alert(row["alert_id"])
+    timeline = [{"id": e["id"], "time": e["ts"], "label": e["label"], "summary": e["summary"], "remote": e["remote"],
+                 "step": e["step"], "severity": e["severity"]} for e in linked]
+    if row["kind"] != "chain":
+        return [], timeline
+    labels, evidence = row["step_labels"], row["evidence"]
+    steps: list[dict] = []
+    for i in range(row["steps_total"]):
+        done = i < row["steps_done"]
+        label = (labels[i] if i < len(labels) and labels[i] else "") or (
+            evidence[i][0].replace("-", " ").capitalize() if i < len(evidence) else f"Step {i + 1}")
+        step = {"index": i + 1, "label": label, "state": "done" if done else "current" if i == row["steps_done"] and not row["complete"] else "pending",
+                "time": None, "detail": "", "count": 0}
+        if done and i < len(evidence) and evidence[i][1]:
+            ids = evidence[i][1]
+            last = store.events_by_event_id(ids[-1:]).get(ids[-1])
+            step["count"] = len(ids)
+            if last:
+                step["time"] = last["ts"]
+                step["detail"] = last["summary"]
+        steps.append(step)
+    return steps, timeline
+
+
+def humanize_full(store: Store, row: dict) -> dict:
+    """humanize() plus the live timeline (steps for chains, linked events for every alert)."""
+    data = humanize(row)
+    data["steps"], data["timeline"] = _steps_and_timeline(store, row)
+    return data
+
+
 def _plural(n: int, one: str, many: str) -> str:
     return one if n == 1 else many
 
@@ -79,7 +113,7 @@ def build_overview(store: Store, *, now: float | None = None) -> dict:
     if not sources and not demo:
         blind.append("Nothing is being watched yet. Start the agent, or load demo data with: erinix demo")
 
-    attention = [humanize(r) for r in store.list_alerts("open", limit=ATTENTION_LIMIT)]
+    attention = [humanize_full(store, r) for r in store.list_alerts("open", limit=ATTENTION_LIMIT)]
     activity = store.activity(now=now)
     return {
         "state": state, "headline": headline, "demo": demo, "mode": mode or "none",

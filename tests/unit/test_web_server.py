@@ -354,3 +354,102 @@ def test_server_info_file_is_private(tmp_path, monkeypatch):
     web.serve(0, tmp_path / "erinix.db", ready=ready)
     assert json.loads(seen["info"])["port"] > 0 and seen["mode"] == 0o600
     assert not web.server_info_path().exists()                                      # removed on exit
+
+
+# ------------------------------------------------------------ live events
+def seed_events(server, n=5):
+    with Store(server.db_path) as s:
+        for i in range(n):
+            s.add_event(event_id=f"ev{i}", ts=NOW + i, kind="web.request", label="Web request", summary=f"GET /{i} → 200", remote="10.0.0.1", source="log")
+        s.link_events(["ev3"], "a" * 32, "step", "high")
+
+
+def get_json(server, path, cookie):
+    status, h, body = call(server, "GET", path, headers={"Cookie": cookie})
+    return status, (json.loads(body) if body else None), h
+
+
+def test_events_need_a_session(dash):
+    seed_events(dash)
+    assert call(dash, "GET", "/api/events")[0] == 401
+    assert call(dash, "GET", "/api/events", headers={"Cookie": f"{COOKIE}=forged"})[0] == 401
+
+
+def test_events_first_call_gives_the_latest_then_only_newer(dash):
+    cookie, _ = sign_in(dash)
+    status, data, _ = get_json(dash, "/api/events", cookie)
+    assert status == 200 and data == {"events": [], "last_id": 0}
+    seed_events(dash)
+    _, data, _ = get_json(dash, "/api/events?limit=3", cookie)
+    assert [e["summary"] for e in data["events"]] == ["GET /2 → 200", "GET /3 → 200", "GET /4 → 200"] and data["last_id"] == data["events"][-1]["id"]
+    last = data["last_id"]
+    assert get_json(dash, f"/api/events?after={last}", cookie)[1] == {"events": [], "last_id": last}
+    with Store(dash.db_path) as s:
+        s.add_event(event_id="new", ts=NOW + 99, kind="auth.failure", label="Login failed", summary="root via sshd", remote="1.2.3.4")
+    _, data, _ = get_json(dash, f"/api/events?after={last}", cookie)
+    assert [e["label"] for e in data["events"]] == ["Login failed"] and data["last_id"] == last + 1
+
+
+def test_events_carry_the_attack_link_and_can_be_filtered(dash):
+    seed_events(dash)
+    cookie, _ = sign_in(dash)
+    _, data, _ = get_json(dash, "/api/events?after=0", cookie)
+    flagged = [e for e in data["events"] if e["alert"]]
+    assert len(data["events"]) == 5 and len(flagged) == 1 and flagged[0]["severity"] == "high" and flagged[0]["step"] == "step"
+    _, only, _ = get_json(dash, "/api/events?after=0&suspicious=1", cookie)
+    assert [e["alert"] for e in only["events"]] == ["a" * 32]
+
+
+@pytest.mark.parametrize("query", ["after=abc", "after=-1", "after=1.5", "limit=abc", "suspicious=2", "suspicious=yes", "after=" + "9" * 400,
+                                   "after=1;DROP%20TABLE%20events", "limit=%00"])
+def test_bad_event_requests_are_refused_cleanly(dash, query):
+    seed_events(dash)
+    cookie, _ = sign_in(dash)
+    status, data, _ = get_json(dash, "/api/events?" + query, cookie)
+    assert status == 400 and "error" in data
+    assert len(get_json(dash, "/api/events?after=0", cookie)[1]["events"]) == 5                   # nothing was damaged
+
+
+def test_event_limits_are_clamped(dash):
+    seed_events(dash, 12)
+    cookie, _ = sign_in(dash)
+    assert len(get_json(dash, "/api/events?after=0&limit=0", cookie)[1]["events"]) == 1
+    assert len(get_json(dash, "/api/events?after=0&limit=999999", cookie)[1]["events"]) == 12
+
+
+def test_hostile_event_text_is_data_not_markup(dash):
+    evil = "</script><img src=x onerror=alert(1)>\u202e\x1b[31m"
+    with Store(dash.db_path) as s:
+        s.add_event(event_id="x", ts=NOW, kind="web.request", label=evil, summary=evil, remote=None)
+    cookie, _ = sign_in(dash)
+    status, h, body = call(dash, "GET", "/api/events", headers={"Cookie": cookie})
+    assert h["content-type"].startswith("application/json") and h["x-content-type-options"] == "nosniff" and all(b < 128 for b in body)
+    assert json.loads(body)["events"][0]["summary"] == evil
+
+
+def test_events_cannot_be_written_through_the_api(dash):
+    cookie, csrf = sign_in(dash)
+    assert post(dash, "/api/events", cookie, csrf, {"summary": "x"})[0] == 404
+    assert call(dash, "POST", "/api/events", headers={"Cookie": cookie, "X-Erinix-CSRF": csrf, "Content-Type": "application/json"}, body=b"{}")[0] == 404
+
+
+def test_alerts_come_with_their_steps_and_timeline(dash):
+    from pathlib import Path
+
+    from erinix.demo.scenarios import SCENARIOS
+    from erinix.engine import Correlator
+    from erinix.recorder import Recorder
+    from erinix.rules import load_rules
+
+    with Store(dash.db_path) as s:
+        rec = Recorder(s, Correlator(load_rules(Path(__file__).resolve().parents[2] / "rules")))
+        for e in sorted(SCENARIOS["revshell"].build(), key=lambda e: e.mono_ns):
+            rec.feed(e)
+    cookie, _ = sign_in(dash)
+    chain = next(a for a in get_json(dash, "/api/alerts?status=all", cookie)[1]["alerts"] if a["technical"]["kind"] == "chain")
+    assert [s["state"] for s in chain["steps"]] == ["done", "done", "done"] and chain["steps"][1]["detail"] == "bash → 10.0.0.5:4444"
+    assert len(chain["timeline"]) == 3
+    detail = get_json(dash, "/api/alerts/" + chain["id"], cookie)[1]
+    assert detail["steps"] == chain["steps"]
+    overview = get_json(dash, "/api/overview", cookie)[1]
+    assert overview["attention"][0]["steps"] and "events_24h" in overview
