@@ -26,7 +26,7 @@ from erinix.store import Store, StoreError
 from erinix.summary import ago, build_overview, empty_overview, humanize
 from erinix.ui.render import Seg, box, paint_segs, safe
 from erinix.ui.views import severity_badge
-from erinix.web.server import DEFAULT_PORT, server_info_path
+from erinix.web.server import DEFAULT_PORT, build_id, server_info_path
 
 STATE_ROLE = {"critical": "bad", "attention": "warn", "protected": "ok", "stopped": "dim"}
 BOX_WIDTH = 104            # one width for every console box, so they line up
@@ -72,30 +72,54 @@ def _resolve(ctx: Context, store: Store, ref: str, status: str) -> dict | None:
     return row
 
 
+def _wrap_segs(parts: list[Seg], width: int) -> list[list[Seg]]:
+    """Word-wrap a line made of coloured pieces; spaces and colours are kept, nothing is cut off."""
+    lines: list[list[Seg]] = [[]]
+    used = 0
+    for seg in parts:
+        for token in re.findall(r"\s*\S+|\s+", seg.text):
+            if used and used + len(token) > width:
+                lines.append([])
+                used = 0
+                token = token.lstrip()
+                if not token:
+                    continue
+            lines[-1].append(Seg(safe(token), seg.role, seg.bold))
+            used += len(token)
+    return lines
+
+
 def _hint(ctx: Context, *parts: Seg) -> None:
     """A line of advice that wraps at word boundaries instead of running past the terminal edge."""
-    def build(width: int) -> str:
-        lines: list[list[Seg]] = [[]]
-        used = 0
-        for seg in parts:
-            for token in re.findall(r"\s*\S+|\s+", seg.text):
-                if used and used + len(token) > width:
-                    lines.append([])
-                    used = 0
-                    token = token.lstrip()
-                    if not token:
-                        continue
-                lines[-1].append(Seg(safe(token), seg.role, seg.bold))
-                used += len(token)
-        return "\n".join(paint_segs(ctx.theme, line) for line in lines)
+    ctx.emit(lambda width: "\n".join(paint_segs(ctx.theme, line) for line in _wrap_segs(list(parts), width)))
 
-    ctx.emit(build)
+
+BADGE_WIDTH = 10
+AGE_WIDTH = 12
+ROW_PREFIX = 3 + BADGE_WIDTH + 2 + AGE_WIDTH      # number, level, gap, age
 
 
 def _badge(severity: str) -> Seg:
-    """The severity badge, padded to one width so list columns line up."""
+    """The severity label, padded to one width and starting in one column, so lists line up."""
     seg = severity_badge(Severity(severity))
-    return Seg(seg.text.ljust(10), seg.role, seg.bold)
+    return Seg((" " + seg.text.strip() + " ").ljust(BADGE_WIDTH), seg.role, seg.bold)
+
+
+def _alert_rows(alerts: list[dict], inner: int) -> list[list[Seg]]:
+    """One block per alert: number, level, age, then the WHOLE sentence, wrapped under its own column."""
+    rows: list[list[Seg]] = []
+    for i, a in enumerate(alerts, 1):
+        head = [Seg(str(i).ljust(2) + " ", "accent", True), _badge(a["severity"]), Seg("  "),
+                Seg(ago(a["updated"]).ljust(AGE_WIDTH), "dim")]
+        column = inner - ROW_PREFIX
+        if column >= 24:
+            lines = textwrap.wrap(a["headline"], column) or [""]
+            rows.append(head + [Seg(safe(lines[0]))])
+            rows += [[Seg(" " * ROW_PREFIX), Seg(safe(line))] for line in lines[1:]]
+        else:                                          # too narrow for two columns: the sentence goes below
+            rows.append(head)
+            rows += [[Seg("   " + safe(line))] for line in textwrap.wrap(a["headline"], max(10, inner - 3)) or [""]]
+    return rows
 
 
 def _json(ctx: Context, payload: object) -> None:
@@ -105,6 +129,11 @@ def _json(ctx: Context, payload: object) -> None:
 # ----------------------------------------------------------------------- status
 def home_sections(ctx: Context, o: dict, width: int) -> list:
     theme = ctx.theme
+    inner = max(20, width - 4)
+
+    def wrapped(rows: list[list[Seg]]) -> list[list[Seg]]:
+        return [line for row in rows for line in _wrap_segs(row, inner)]
+
     role = STATE_ROLE.get(o["state"], "dim")
     n = o["open"]["total"]
     top = [[Seg(f"{_glyph(ctx, o['state'])} {o['headline']}", role, True)],
@@ -122,17 +151,14 @@ def home_sections(ctx: Context, o: dict, width: int) -> list:
             watching.append([Seg(theme.glyph("warn") + " ", "warn", True), Seg("Blind spot: " + blind)])
     if not watching:
         watching.append([Seg("Nothing yet", "dim")])
-    attention: list[list[Seg]] = []
-    for i, a in enumerate(o["attention"], 1):
-        attention.append([Seg(f"{i}  ", "accent", True), _badge(a["severity"]), Seg("  "), Seg(ago(a["updated"]).ljust(11), "dim"),
-                          Seg(a["headline"])])
+    attention = _alert_rows(o["attention"], inner)
     if not attention:
         attention.append([Seg("Nothing needs your attention.", "ok")])
     hints = [[Seg("alert 1", "accent"), Seg(" details  ", "dim"), Seg("alerts", "accent"), Seg(" the full list  ", "dim"),
               Seg("ui", "accent"), Seg(" web dashboard", "dim")]]
-    return [(None, top), ([Seg(f"{theme.glyph('star')} WATCHING", "accent", True)], watching),
+    return [(None, wrapped(top)), ([Seg(f"{theme.glyph('star')} WATCHING", "accent", True)], wrapped(watching)),
             ([Seg(f"{theme.glyph('star')} NEEDS ATTENTION ({n})", "accent", True)], attention),
-            ([Seg(f"{theme.glyph('star')} NEXT", "accent", True)], hints)]
+            ([Seg(f"{theme.glyph('star')} NEXT", "accent", True)], wrapped(hints))]
 
 
 def cmd_status(ctx: Context, args: list[str]) -> int:
@@ -147,7 +173,7 @@ def cmd_status(ctx: Context, args: list[str]) -> int:
         _json(ctx, overview)
         return 0
     title = [Seg(f"{ctx.theme.glyph('star')} ERINIX {ctx.theme.glyph('dot')} STATUS", "accent", True)]
-    ctx.emit(lambda w: "\n".join(box(ctx.theme, title, home_sections(ctx, overview, w), width=min(w, BOX_WIDTH), border="brown")))
+    ctx.emit(lambda w: "\n".join(box(ctx.theme, title, home_sections(ctx, overview, min(w, BOX_WIDTH)), width=min(w, BOX_WIDTH), border="brown")))
     return 0
 
 
@@ -165,9 +191,16 @@ def cmd_alerts(ctx: Context, args: list[str]) -> int:
     if not rows:
         _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Nothing needs your attention." if status == "open" else "No alerts here."))
         return 0
-    ctx.table(["#", "Level", "What happened", "When"],
-              [[Seg(str(i), "accent", True), _badge(a["severity"]), a["headline"], ago(a["updated"])]
-               for i, a in enumerate(rows, 1)])
+    def build(width: int) -> str:
+        inner = min(width, BOX_WIDTH)
+        lines: list[list[Seg]] = []
+        if inner - ROW_PREFIX >= 24:
+            lines.append([Seg("#".ljust(2) + " ", "dim"), Seg(" " + "Level".ljust(BADGE_WIDTH - 1), "dim"), Seg("  "),
+                          Seg("When".ljust(AGE_WIDTH), "dim"), Seg("What happened", "dim")])
+        lines += _alert_rows(rows, inner)
+        return "\n".join(paint_segs(ctx.theme, line) for line in lines)
+
+    ctx.emit(build)
     _hint(ctx, Seg("alert 1", "accent"), Seg(" shows the details; add ", "dim"), Seg("--tech", "accent"), Seg(" for the technical side.", "dim"))
     return 0
 
@@ -343,13 +376,34 @@ def _read_server_info() -> dict | None:
         return None
 
 
-def _healthy(port: int) -> bool:
+def _health(port: int) -> str | None:
+    """What a dashboard on this port answers to /healthz ('ok <build>'), or None if nothing answers."""
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
         conn.request("GET", "/healthz", headers={"Host": f"127.0.0.1:{port}"})
-        return conn.getresponse().status == 200
+        response = conn.getresponse()
+        body = response.read(100).decode("ascii", "replace").strip()
+        return body if response.status == 200 and body.startswith("ok") else None
     except (OSError, http.client.HTTPException):
+        return None
+
+
+def _stop_server(ctx: Context, info: dict) -> bool:
+    """Stop the recorded dashboard, but only if that process really is an Erinix dashboard."""
+    pid = info["pid"]
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        cmdline = []
+    if not (b"serve" in cmdline and any(b"erinix" in part for part in cmdline)):
+        ctx.error("the recorded process is not an Erinix dashboard: not touching it")
         return False
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(30):
+        time.sleep(0.1)
+        if not Path(f"/proc/{pid}").exists():
+            break
+    return True
 
 
 def _parse_port(opts: dict[str, str]) -> int:
@@ -371,14 +425,21 @@ def cmd_ui(ctx: Context, args: list[str]) -> int:
     with store:
         token = store.create_login_token()
     info = _read_server_info()
-    if info and _healthy(info["port"]):
+    answer = _health(info["port"]) if info else None
+    if answer is not None and answer != f"ok {build_id()}":
+        _hint(ctx, Seg("An older dashboard is still running: replacing it with the current one.", "dim"))
+        if not _stop_server(ctx, info):
+            ctx.error("could not replace the old dashboard: run 'erinix stop' from a normal terminal")
+            return 1
+        answer = None
+    if answer is not None:
         port = info["port"]
     else:
         subprocess.Popen([sys.executable, "-m", "erinix.cli", "serve", "--port", str(port)], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
         for _ in range(50):
             time.sleep(0.1)
-            if _healthy(port):
+            if _health(port) is not None:
                 break
         else:
             ctx.error(f"the dashboard did not start on port {port} (is it in use? try --port)")
@@ -414,19 +475,8 @@ def cmd_stop(ctx: Context, args: list[str]) -> int:
     if not info:
         _hint(ctx, Seg("The dashboard is not running."))
         return 0
-    pid = info["pid"]
-    try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
-    except OSError:
-        cmdline = []
-    if not (b"serve" in cmdline and any(b"erinix" in part for part in cmdline)):
-        ctx.error("the recorded process is not an Erinix dashboard: not touching it")
+    if not _stop_server(ctx, info):
         return 1
-    os.kill(pid, signal.SIGTERM)
-    for _ in range(30):
-        time.sleep(0.1)
-        if not Path(f"/proc/{pid}").exists():
-            break
     _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Dashboard stopped."))
     return 0
 

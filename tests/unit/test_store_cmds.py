@@ -260,3 +260,72 @@ def test_wrapped_advice_keeps_every_word_and_space(capsys, monkeypatch):
         monkeypatch.setattr("erinix.ui.theme.Theme.width", property(lambda self, c=columns: c))
         out = run(capsys, "alert", "1")[1]
         assert "Add --tech for the technical details, or dismiss 1 to hide it." in " ".join(out.split()), columns
+
+
+# ------------------------------------------------------ readable lists
+def _plain(text):
+    import re
+    return " ".join(re.sub(r"[│|╭╮╰╯├┤─+\-]{1,}", " ", text).split())
+
+
+@pytest.mark.parametrize("columns", [45, 60, 80, 105, 140])
+def test_full_sentences_are_always_readable(capsys, monkeypatch, columns):
+    demo(capsys)
+    headlines = [a["headline"] for a in json.loads(run(capsys, "alerts", "--json")[1])]
+    monkeypatch.setattr("erinix.ui.theme.Theme.width", property(lambda self: max(20, min(120, columns))))
+    listing = _plain(run(capsys, "alerts")[1])
+    assert all(h in listing for h in headlines), columns                           # nothing is cut off with "…"
+    assert "…" not in run(capsys, "alerts")[1] and "..." not in run(capsys, "alerts")[1]
+    status = _plain(run(capsys, "status")[1])
+    assert all(h in status for h in headlines[:5]), columns
+
+
+def test_list_columns_line_up(capsys, monkeypatch):
+    demo(capsys)
+    monkeypatch.setattr("erinix.ui.theme.Theme.width", property(lambda self: 105))
+    lines = run(capsys, "alerts")[1].splitlines()
+    rows = [l for l in lines if l[:2].strip().isdigit()]
+    assert len(rows) >= 8
+    for line in rows:
+        assert line[3:13].strip() in ("CRITICAL", "HIGH", "MEDIUM", "LOW") and line[3] == " " and line[4] != " "      # label starts in one column
+        assert line[27] != " " and line[26] == " "                                                                    # sentence starts in one column
+    wrapped = [l for l in lines if l.startswith(" " * 27) and l.strip()]
+    assert wrapped and all(len(l) - len(l.lstrip()) == 27 for l in wrapped)                                          # continuations sit under it
+    assert len({l.index("min ago") for l in rows if "min ago" in l and l[14:16].strip().isdigit() and len(l[14:16].strip()) == 1}) <= 2
+
+
+# --------------------------------------------------- never reuse an old dashboard
+def test_healthz_carries_a_build_fingerprint(running_dashboard):
+    import re
+
+    conn = http.client.HTTPConnection("127.0.0.1", running_dashboard.port, timeout=5)
+    conn.request("GET", "/healthz", headers={"Host": f"127.0.0.1:{running_dashboard.port}"})
+    body = conn.getresponse().read().decode()
+    assert re.fullmatch(r"ok [0-9a-f]{12}", body) and body == f"ok {web.build_id()}" and web.build_id() == web.build_id()
+
+
+def test_ui_refuses_to_reuse_or_touch_a_server_it_cannot_replace(capsys, running_dashboard, monkeypatch):
+    monkeypatch.setattr(store_cmds, "_health", lambda port: "ok")                      # what a server from older code answers
+    monkeypatch.setattr(store_cmds, "open_url", lambda url: pytest.fail("must not open a browser"))
+    code, out, err = run(capsys, "ui")
+    assert code == 1 and "could not replace the old dashboard" in err and "older dashboard" in out
+    assert "#login=" not in out                                                         # and no link is handed out
+
+
+def test_ui_replaces_an_old_dashboard_with_the_current_one(capsys, running_dashboard, monkeypatch):
+    stopped, started = [], []
+    answers = iter(["ok", f"ok {web.build_id()}"])
+    monkeypatch.setattr(store_cmds, "_health", lambda port: next(answers))
+    monkeypatch.setattr(store_cmds, "_stop_server", lambda ctx, info: stopped.append(info["pid"]) or True)
+    monkeypatch.setattr(store_cmds.subprocess, "Popen", lambda argv, **kw: started.append(argv))
+    monkeypatch.setattr(store_cmds, "open_url", lambda url: True)
+    code, out, _ = run(capsys, "ui", "--port", "8431")
+    assert code == 0 and stopped == [os.getpid()] and len(started) == 1 and started[0][-2:] == ["--port", "8431"]
+    assert "http://127.0.0.1:8431/#login=" in out
+
+
+def test_ui_reuses_a_dashboard_of_the_same_build(capsys, running_dashboard, monkeypatch):
+    monkeypatch.setattr(store_cmds.subprocess, "Popen", lambda *a, **k: pytest.fail("must not start another server"))
+    monkeypatch.setattr(store_cmds, "_stop_server", lambda *a: pytest.fail("must not stop a current server"))
+    code, out, _ = run(capsys, "ui", "--no-browser")
+    assert code == 0 and f":{running_dashboard.port}/#login=" in out
