@@ -60,6 +60,17 @@ def server_info_path() -> Path:
     return state_dir() / "server.json"
 
 
+def build_id() -> str:
+    """A short fingerprint of the dashboard code and pages. A server started from older code has another one,
+    so `erinix ui` can tell it must be replaced instead of reusing it."""
+    digest = hashlib.sha256()
+    root = resources.files("erinix.web").joinpath("static")
+    for name in ("index.html", "app.js", "style.css"):
+        digest.update(root.joinpath(name).read_bytes())
+    digest.update(Path(__file__).read_bytes())
+    return digest.hexdigest()[:12]
+
+
 def _load_static() -> dict[str, tuple[bytes, str]]:
     root = resources.files("erinix.web").joinpath("static")
     files = {
@@ -82,6 +93,7 @@ class DashboardServer(ThreadingHTTPServer):
             raise ValueError("the dashboard only listens on loopback addresses")
         self.db_path = Path(db_path) if db_path is not None else default_db_path()
         self.static = _load_static()
+        self.build = build_id()
         self.sessions: dict[str, tuple[float, str]] = {}      # sha256(session id) -> (expires, csrf token)
         self.lock = threading.Lock()
         self.failures: list[float] = []
@@ -195,7 +207,7 @@ class _Handler(BaseHTTPRequestHandler):
                 body, kind = self.server.static[path]
                 return self._send(200, body, kind)
             if path == "/healthz":
-                return self._send(200, b"ok", "text/plain; charset=utf-8")
+                return self._send(200, b"ok " + self.server.build.encode(), "text/plain; charset=utf-8")
             if path.startswith("/api/"):
                 return self._api_get(path, query)
             return self._error(404)
@@ -326,7 +338,7 @@ def serve(port: int = DEFAULT_PORT, db_path: Path | str | None = None, *, ready=
     os.makedirs(info.parent, mode=0o700, exist_ok=True)
     fd = os.open(info, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     with os.fdopen(fd, "w") as handle:
-        json.dump({"pid": os.getpid(), "port": server.port, "started": time.time()}, handle)
+        json.dump({"pid": os.getpid(), "port": server.port, "started": time.time(), "build": server.build}, handle)
     stopper = threading.Thread(target=server.shutdown, daemon=True)
     signal.signal(signal.SIGTERM, lambda *_: stopper.start())
     if ready:
