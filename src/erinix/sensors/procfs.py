@@ -122,14 +122,15 @@ class ProcessSensor:
 
     name = "Programs and commands"
 
-    def __init__(self, proc: str = "/proc") -> None:
+    def __init__(self, proc: str = "/proc", view=None) -> None:
         self.proc = proc
+        self.view = view                    # who looks at /proc: this process, or a privileged helper
         self.known: dict[int, ProcRecord] = {}
         self.baseline_done = False
         self.error = ""
 
     def poll(self) -> list[Event]:
-        now = scan(self.proc)
+        now = self.view.scan() if self.view is not None else scan(self.proc)
         if not now:
             self.error = "cannot read /proc"
             return []

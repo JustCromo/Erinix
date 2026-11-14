@@ -104,7 +104,8 @@ def inode_owners(proc: str = "/proc") -> dict[int, int]:
 class NetworkSensor:
     name = "Network connections"
 
-    def __init__(self, processes, proc: str = "/proc", clock=time.monotonic) -> None:
+    def __init__(self, processes, proc: str = "/proc", clock=time.monotonic, view=None) -> None:
+        self.view = view
         self.processes = processes                      # the ProcessSensor: it knows the programs
         self.proc = proc
         self.clock = clock
@@ -120,13 +121,13 @@ class NetworkSensor:
         return self.processes.known.get(pid) if pid else None
 
     def poll(self) -> list[Event]:
-        self.sockets = read_sockets(self.proc)
+        self.sockets = self.view.sockets() if self.view is not None else read_sockets(self.proc)
         self.error = "" if self.sockets or os.path.exists(f"{self.proc}/net/tcp") else "cannot read /proc/net"
         interesting = [s for s in self.sockets if s.state in (ESTABLISHED, LISTEN)]
         keys = {(s.local, s.lport, s.remote, s.rport, s.state, s.inode) for s in interesting}
         new = [s for s in interesting if (s.local, s.lport, s.remote, s.rport, s.state, s.inode) not in self.seen]
         if new and self.clock() - self._refreshed >= INODE_REFRESH_SECONDS and any(s.inode not in self.owners for s in new):
-            self.owners = inode_owners(self.proc)
+            self.owners = self.view.owners() if self.view is not None else inode_owners(self.proc)
             self._refreshed = self.clock()
         events: list[Event] = []
         if self.baseline_done:
@@ -152,7 +153,7 @@ class NetworkSensor:
         """(listening, connections) as plain dictionaries for the dashboard."""
         if self.sockets and any(s.inode not in self.owners for s in self.sockets):
             if self.clock() - self._refreshed >= INODE_REFRESH_SECONDS:
-                self.owners = inode_owners(self.proc)
+                self.owners = self.view.owners() if self.view is not None else inode_owners(self.proc)
                 self._refreshed = self.clock()
         listening, connections = [], []
         for sock in self.sockets:

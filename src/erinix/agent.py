@@ -39,10 +39,12 @@ def _user() -> str:
 
 
 class Agent:
-    def __init__(self, store, recorder: Recorder, config: Config, *, proc: str = "/proc", clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, store, recorder: Recorder, config: Config, *, proc: str = "/proc", clock: Callable[[], float] = time.time, view=None) -> None:
         self.store, self.recorder, self.config, self.clock = store, recorder, config, clock
-        self.processes = ProcessSensor(proc) if config.processes else None
-        self.network = NetworkSensor(self.processes, proc) if config.network and self.processes else None
+        self.view = view                                   # None: look at /proc ourselves; else a privileged helper looks for us
+        self.privileged = os.geteuid() == 0
+        self.processes = ProcessSensor(proc, view) if config.processes else None
+        self.network = NetworkSensor(self.processes, proc, view=view) if config.network and self.processes else None
         self.logs = [spec.build() for spec in config.sources]
         self.events = 0
         self.alerts = 0
@@ -95,7 +97,7 @@ class Agent:
                          "detail": self.processes.error or "polling /proc (very short programs can slip between two looks)"})
         if self.network is not None:
             rows.append({"name": self.network.name, "state": "blind" if self.network.error else "ok",
-                         "detail": self.network.error or ("all users" if os.geteuid() == 0 else "your own programs only (run as root to see all)")})
+                         "detail": self.network.error or ("all users" if self.privileged else "your own programs only (press R in the console to see all)")})
         rows.extend(log.status() for log in self.logs)
         return rows
 

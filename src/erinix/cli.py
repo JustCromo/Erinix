@@ -50,6 +50,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"erinix: {app.exit_reason}", file=sys.stderr)
             return code
         return registry.run(ctx, ["help"])
+    if args[0] == "helper" and len(args) == 1:         # hidden: the root side of `--elevate`, reads /proc and nothing else
+        from erinix.sensors.procview import helper_main
+        return helper_main()
     if args[0] in ("--version", "-V"):
         print(f"erinix {__version__}")
         return 0

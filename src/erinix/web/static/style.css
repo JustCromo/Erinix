@@ -423,3 +423,13 @@ a.tile:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 45%,
 .panel, .fill > * { min-width: 0; }
 @media (min-width: 900px) { .two-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 @media (min-width: 1700px) { .fill.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+
+/* the menu is a rail glued to the left edge, full height: it belongs to the window, not floating over the page */
+@media (min-width: 900px) {
+  .shell { max-width: none; margin: 0; padding: 0; gap: 0; grid-template-columns: 236px minmax(0, 1fr); }
+  .sidebar { top: 0; height: 100vh; border-radius: 0; border: 0; border-right: 1px solid var(--border); box-shadow: none; background: var(--card); padding: 22px 14px 16px; }
+  .content { padding: 24px 32px 40px; }
+  .list-pane { height: calc(100vh - 64px); }
+  .detail-pane { max-height: calc(100vh - 64px); }
+  .fill .panel { height: calc(100vh - 210px); }
+}
