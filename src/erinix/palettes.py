@@ -14,13 +14,13 @@ from typing import Mapping
 DEFAULT = "auto"
 
 LIGHT: Mapping[str, str] = {
-    "bg": "#fbede4", "card": "#fff8f3", "card_2": "#fbf0e8", "text": "#2e1b33", "muted": "#6f5775", "faint": "#735d79",
+    "bg": "#fbede4", "card": "#fff8f3", "card_2": "#fbf0e8", "text": "#2e1b33", "muted": "#5f4766", "faint": "#6a5171",
     "border": "#ebd3c8", "primary": "#7a2f7d", "on_primary": "#ffffff", "accent": "#f29a76",
     "ok": "#3f7d4e", "low": "#427088", "medium": "#9a6414", "high": "#b8481f", "critical": "#a63232", "on_critical": "#ffffff",
     "shadow": "rgba(46, 27, 51, .10)",
 }
 DARK: Mapping[str, str] = {
-    "bg": "#1c1022", "card": "#28172f", "card_2": "#22132a", "text": "#f6e8f0", "muted": "#bba0c2", "faint": "#a58fae",
+    "bg": "#1c1022", "card": "#28172f", "card_2": "#22132a", "text": "#f6e8f0", "muted": "#cdb6d3", "faint": "#b79fc0",
     "border": "#43284d", "primary": "#ff9e7d", "on_primary": "#1c1022", "accent": "#c77ddb",
     "ok": "#7fc08e", "low": "#7fb0c8", "medium": "#e0ae4a", "high": "#e88b5f", "critical": "#f07a7a", "on_critical": "#1c1022",
     "shadow": "rgba(0, 0, 0, .35)",
