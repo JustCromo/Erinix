@@ -114,6 +114,14 @@ class AgentRuntime:
         store.close()
         self._store = None
 
+    def restart_with(self, helper) -> str:
+        """Start again with a root helper feeding us (used by the cockpit's R key)."""
+        self.stop()
+        self.helper, self.elevate = helper, True
+        self._stop, self._ready = threading.Event(), threading.Event()
+        self.error, self.note, self.mode = "", "", "limited"
+        return self.start()
+
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:

@@ -100,10 +100,22 @@ MIT.
 ## Watching a real machine
 
 ```
-erinix watch                      # looks at this machine until Ctrl-C (settings found automatically)
-erinix watch --config my.toml     # or exactly what you choose
-erinix ui                         # the cockpit: incidents, live events, sources, programs, ports, connections
+erinix                            # starts watching AND opens the live cockpit, in one terminal
+erinix --elevate                  # same, and asks for your sudo password to see every program
+erinix ui                         # the web dashboard (opens in the browser)
+erinix watch                      # watch without a screen (for a service or a second terminal)
+erinix --console                  # the older scrolling console
 ```
+
+In the cockpit: `Tab` moves between panels, `Enter` opens a row, `/` searches, `:` runs any command (`alerts`, `status`,
+`help`...), `x` closes an incident, `r` shows routine activity, `p` pauses the feed, `w` gives the dashboard link,
+`R` raises the view to every program (sudo password), `?` shows all keys. Only one Erinix watches at a time; a second
+one opens as a viewer of the same data.
+
+Why not `sudo erinix`? `sudo` uses its own short PATH, so a command installed in your home or in a venv is "not found".
+`erinix --elevate` (or `R`) does it safely instead: only a tiny helper runs as root, and all it does is READ `/proc` and
+send a plain list to your normal user's Erinix. The helper runs `python -m erinix helper` from the same install, so for
+daily use install Erinix where only root can write; Erinix warns you when it is a development install.
 
 Without a settings file Erinix looks at what it can read: running programs and network connections (from `/proc`),
 SSH logins (journal or `/var/log/auth.log`), common web server logs, and Docker containers running Caddy, nginx or Apache.

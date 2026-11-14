@@ -112,7 +112,7 @@ def build_overview(store: Store, *, now: float | None = None) -> dict:
     extra = store.get_meta("blind_spots", []) or []
     blind += [str(b) for b in extra if isinstance(b, str)]
     if not sources and not demo:
-        blind.append("Nothing is being watched yet. Start the agent, or load demo data with: erinix demo")
+        blind.append("Nothing is being watched yet. Open erinix in a terminal to start watching, or load demo data with: erinix demo")
 
     from erinix import palettes
     from erinix.incidents import build_incidents
@@ -181,7 +181,7 @@ def empty_overview() -> dict:
     return {"state": "stopped", "headline": "Erinix is not running", "demo": False, "mode": "none", "since": None,
             "heartbeat_age": None, "open": {"total": 0, "low": 0, "medium": 0, "high": 0, "critical": 0},
             "dismissed": 0, "attention": [], "events_24h": 0, "alerts_24h": 0, "activity": [], "sources": [],
-            "blind_spots": ["Nothing is being watched yet. Start the agent, or load demo data with: erinix demo"],
+            "blind_spots": ["Nothing is being watched yet. Open erinix in a terminal to start watching, or load demo data with: erinix demo"],
             "version": __version__, "incidents": {"open": 0, "top": []}, "theme": "auto", "themes": _palette_info()}
 
 

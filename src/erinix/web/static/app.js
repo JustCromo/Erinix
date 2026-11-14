@@ -494,16 +494,16 @@
     incidents: { title: "Incidents", page: "#/incidents", limit: 4, stack: true, empty: "Nothing needs your attention.",
       rows: function () { return state.incidents.filter(function (i) { return i.status === "open"; }); },
       text: function (i) { return [i.who, i.headline, (i.tags || []).join(" ")].join(" "); }, row: function (i) { return incidentRow(i, "panel"); } },
-    sources: { title: "Sources", page: "#/sources", limit: 6, search: "Search sources…", toggle: "Problems only", empty: "No sources are configured yet. Run: erinix watch",
+    sources: { title: "Sources", page: "#/sources", limit: 6, search: "Search sources…", toggle: "Problems only", empty: "No sources are configured yet. Open erinix in a terminal to start watching",
       rows: function () { return state.overview ? state.overview.sources : []; }, rank: function (x) { return x.state === "ok" ? 1 : 0; },
       keep: function (x) { return x.state !== "ok"; }, text: function (x) { return x.name + " " + (x.detail || ""); }, row: sourceRow, flag: function (x) { return x.state !== "ok"; },
       cols: [{ h: "Status", c: stateCell }, { h: "Source", c: function (x) { return h("strong", null, x.name); } }, { h: "Details", c: function (x) { return x.detail || ""; } }, { h: "Activity", c: activityText }] },
-    programs: { title: "Programs", page: "#/programs", limit: 6, search: "Search programs…", empty: "Waiting for the agent. Run: erinix watch",
+    programs: { title: "Programs", page: "#/programs", limit: 6, search: "Search programs…", empty: "Waiting for the agent. Open erinix in a terminal to start watching",
       rows: function () { return state.inv ? state.inv.processes : []; },
       text: function (p) { return [p.pid, p.name, p.command, userName(p.uid)].join(" "); }, row: programRow,
       cols: [{ h: "PID", c: function (p) { return h("span", { class: "mono" }, String(p.pid)); } }, { h: "Program", c: function (p) { return h("strong", null, p.name); } },
         { h: "Command", c: function (p) { return h("span", { class: "mono" }, p.command); } }, { h: "User", c: function (p) { return userName(p.uid); } }] },
-    ports: { title: "Listening ports", page: "#/network", limit: 6, search: "Search ports…", toggle: "Open to network", empty: "Waiting for the agent. Run: erinix watch",
+    ports: { title: "Listening ports", page: "#/network", limit: 6, search: "Search ports…", toggle: "Open to network", empty: "Waiting for the agent. Open erinix in a terminal to start watching",
       rows: function () { return state.inv ? state.inv.listening : []; }, rank: function (p) { return p.exposed ? 0 : 1; },
       keep: function (p) { return p.exposed; }, text: function (p) { return [p.port, p.program, p.local].join(" "); }, row: portRow, flag: function (p) { return p.exposed; },
       cols: [{ h: "Port", c: function (p) { return h("span", { class: "mono" }, String(p.port)); } }, { h: "Program", c: function (p) { return h("strong", null, p.program || "unknown program"); } },
@@ -594,7 +594,7 @@
     const st = STATES[o.state] || STATES.stopped;
     const total = o.sources.length, watching = o.sources.filter(function (x) { return x.state === "ok"; }).length, blind = total - watching;
     let headline, lead;
-    if (o.state === "stopped") { headline = "Erinix is not watching"; lead = "Nothing is being checked right now. Run  erinix watch  to start, or  erinix demo  to look around."; }
+    if (o.state === "stopped") { headline = "Erinix is not watching"; lead = "Nothing is being checked right now. Open  erinix  in a terminal to start watching, or run  erinix demo  to look around."; }
     else if (!top.length) { headline = "All quiet"; lead = "Nothing suspicious is happening." + (total ? " Erinix is watching " + watching + " of " + total + " sources." : ""); }
     else { headline = top[0].headline; lead = top[0].summary; }
     const first = top.length ? safeId(top[0].id) : null;

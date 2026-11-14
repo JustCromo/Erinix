@@ -17,13 +17,13 @@ pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="se
 
 
 class Session:
-    def __init__(self, tmp_path, rows=40, cols=130):
+    def __init__(self, tmp_path, rows=40, cols=130, extra=("--console",)):
         env = {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor", "LANG": "C.UTF-8",
                "PYTHONIOENCODING": "utf-8", "XDG_STATE_HOME": str(tmp_path)}
         env.pop("NO_COLOR", None)
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
-            os.execve(sys.executable, [sys.executable, "-m", "erinix.cli"], env)
+            os.execve(sys.executable, [sys.executable, "-m", "erinix.cli", *extra], env)
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         self.buf = ""
         self.raw = b""
@@ -108,3 +108,17 @@ def test_terminate_signal_restores_terminal(tmp_path):
     restore = t.RESET + t.PASTE_OFF + t.MOUSE_OFF + t.CURSOR_SHOW + t.ALT_OFF
     assert restore in s.buf
     assert "terminated by signal SIGTERM" in s.buf.split(restore)[-1]     # the exit is never silent
+
+
+def test_bare_erinix_starts_watching_and_shows_the_cockpit(tmp_path):
+    s = Session(tmp_path, extra=())
+    assert s.wait_for("Open ports"), s.buf[-500:]
+    assert t.ALT_ON in s.buf
+    plain = t.strip_ansi(s.buf)
+    assert "Incidents" in plain and "Connections" in plain
+    s.send("?")
+    assert s.wait_for("Tab / Shift-Tab")
+    s.send("q")
+    s.send("q")
+    assert s.finish() == 0
+    assert t.ALT_OFF in s.buf and t.CURSOR_SHOW in s.buf          # the terminal is given back
