@@ -344,3 +344,82 @@ dl.tech.flat { margin: 0; padding: 0; border: 0; background: none; }
 @media (min-width: 900px) {
   .cockpit .c-sources, .cockpit .c-ports, .cockpit .c-conns, .cockpit .c-progs { height: clamp(240px, 34vh, 400px); }
 }
+
+
+/* ------------------------------------------------------------ v2: more sections, real tables, roomier cockpit, one theme button */
+.brand, .nav-group { }
+.foot-row { display: flex; align-items: center; gap: 8px; }
+.foot-row .pill { flex: 1 1 auto; }
+.icon-btn { flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; color: var(--text); background: var(--card-2); border: 1px solid var(--border); }
+.icon-btn:hover { border-color: var(--primary); color: var(--primary); }
+.icon-btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent); outline-offset: 2px; }
+.icon-btn .ico { width: 20px; height: 20px; }
+@media (max-width: 899px) {
+  .shell { padding-top: 60px; }
+  .side-foot { display: contents; }
+  .side-foot .pill, .side-foot .tiny { display: none; }
+  .foot-row { display: contents; }
+  #theme-toggle { position: fixed; z-index: 40; top: 10px; right: 12px; background: var(--card); }
+  nav a { padding: 7px 4px; font-size: .64rem; flex: 1 1 0; min-width: 0; }
+  nav a .lbl { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+}
+a.more { margin-left: auto; font-size: .86rem; font-weight: 800; text-decoration: none; color: var(--primary); }
+a.more:hover { text-decoration: underline; }
+a.tile { text-decoration: none; color: inherit; }
+a.tile:hover { border-color: var(--primary); }
+a.tile:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent); outline-offset: 2px; }
+
+/* roomier rows */
+.rows { gap: 4px; }
+.row { padding: 12px 16px; gap: 16px; border-radius: 12px; }
+.row-main strong { font-size: 1rem; } .row-sub { font-size: .86rem; margin-top: 2px; }
+.row.src { grid-template-columns: 1.6em minmax(0, 1fr); }
+.panel { padding: 18px 20px 16px; }
+.panel-head { margin-bottom: 14px; }
+.cockpit { gap: 18px; }
+.cockpit .panel .stack { gap: 12px; }
+.panel .inc { padding: 14px 16px 14px 18px; }
+.cockpit .panel.compact { height: auto; max-height: 520px; }
+.cockpit .panel.compact .panel-body { overflow: auto; }
+.cockpit .c-chart .panel-body { min-height: 150px; }
+
+/* tables */
+.table { display: grid; min-width: 640px; }
+.trow { display: grid; gap: 18px; align-items: center; padding: 13px 18px; border-bottom: 1px solid var(--border); }
+.trow:last-child { border-bottom: 0; }
+.trow > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trow.thead { position: sticky; top: 0; z-index: 1; padding-top: 4px; padding-bottom: 12px; background: var(--card); border-bottom: 2px solid var(--border); color: var(--muted); font-size: .74rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.trow:not(.thead):hover { background: var(--card-2); }
+.trow.flagged { box-shadow: inset 4px 0 0 var(--high); }
+.t-programs .trow { grid-template-columns: 90px minmax(150px, .8fr) minmax(0, 2.6fr) 110px; }
+.t-ports .trow { grid-template-columns: 90px minmax(150px, 1fr) minmax(0, 1.2fr) 190px; }
+.t-connections .trow { grid-template-columns: 80px minmax(150px, .9fr) minmax(0, 1.3fr) minmax(0, 1.3fr) 150px; }
+.t-sources .trow { grid-template-columns: 140px minmax(150px, 1fr) minmax(0, 2fr) minmax(0, 1.4fr); }
+.fill { display: grid; gap: 18px; margin-bottom: 18px; }
+.fill .panel { height: clamp(420px, 66vh, 900px); margin: 0; }
+.two-cols { display: grid; gap: 18px; grid-template-columns: 1fr; }
+@media (min-width: 900px) {
+  .fill .panel { height: calc(100vh - 190px); min-height: 420px; }
+  .fill.two .panel { height: clamp(420px, 56vh, 640px); }
+  .two-cols { grid-template-columns: 1fr 1fr; }
+  .cockpit .c-incidents, .cockpit .c-live { height: clamp(420px, 58vh, 640px); }
+  .cockpit .c-incidents { grid-column: span 5; } .cockpit .c-live { grid-column: span 7; }
+  .cockpit .c-sources, .cockpit .c-ports, .cockpit .c-conns { grid-column: span 4; height: auto; }
+  .cockpit .c-chart { grid-column: span 8; height: auto; } .cockpit .c-machine { grid-column: span 4; height: auto; }
+}
+@media (min-width: 1700px) {
+  .fill.two { grid-template-columns: 1fr 1fr; }
+  .fill.two .panel { height: calc(100vh - 190px); }
+}
+.compact .row.port, .compact .row.conn { grid-template-columns: auto minmax(0, 1fr); }
+.compact .row > .tag { grid-column: 2; justify-self: start; margin-top: 4px; }
+.compact .row > .row-aside { grid-column: 2; }
+.compact .row.prog { grid-template-columns: auto minmax(0, 1fr); }
+@media (min-width: 900px) {
+  .fill.two .panel { height: auto; min-height: 260px; max-height: 62vh; }
+}
+@media (min-width: 1700px) { .fill.two .panel { height: calc(100vh - 190px); max-height: none; } }
+.fill, .two-cols { grid-template-columns: minmax(0, 1fr); }
+.panel, .fill > * { min-width: 0; }
+@media (min-width: 900px) { .two-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@media (min-width: 1700px) { .fill.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
