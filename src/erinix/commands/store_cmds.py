@@ -440,6 +440,55 @@ def cmd_demo(ctx: Context, args: list[str]) -> int:
     return 0
 
 
+def cmd_watch(ctx: Context, args: list[str]) -> int:
+    """Watch this machine for real: programs, connections and the log sources, until Ctrl-C."""
+    from erinix import config as cfg
+    from erinix.agent import Agent
+    from erinix.commands.builtin import default_rules_path
+    from erinix.engine import Correlator
+    from erinix.recorder import Recorder
+    from erinix.rules import RuleError, load_rules
+
+    _, _, opts = parse_args(args, options=("--config", "--for"), max_positional=0)
+    if ctx.emitter is not None:
+        ctx.error("'watch' keeps running: start it from a normal terminal, in a second window next to the dashboard")
+        return 2
+    duration = _number(opts, "--for", 0, 0, 31 * 86400) or None
+    try:
+        config, origin = cfg.load(opts.get("--config"))
+        ruleset = load_rules(default_rules_path(None))
+    except (cfg.ConfigError, RuleError) as exc:
+        ctx.error(str(exc))
+        return 2
+    store = _open(ctx, write=True)
+    if store is None:
+        return 1
+    with store:
+        if store.get_meta("mode") != "live":                      # demo data never mixes with real data
+            store.reset()
+        agent = Agent(store, Recorder(store, Correlator(ruleset)), config)
+        _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg(f"Watching this machine (settings: {origin}). Ctrl-C stops it."))
+        for note in config.notes:
+            _hint(ctx, Seg("! ", "warn", True), Seg(note))
+        stopped = False
+
+        def _stop(*_: object) -> None:
+            nonlocal stopped
+            stopped = True
+
+        previous = signal.signal(signal.SIGTERM, _stop)
+        try:
+            result = agent.run(duration=duration, stop=lambda: stopped)
+        except KeyboardInterrupt:
+            agent.close()
+            result = {"events": agent.events, "alerts": agent.alerts}
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+    _hint(ctx, Seg("Stopped after ", "dim"), Seg(str(result["events"]), "accent"), Seg(" events, ", "dim"),
+          Seg(str(result["alerts"]), "accent"), Seg(" alert updates.", "dim"))
+    return 0
+
+
 def _number(opts: dict[str, str], name: str, default: float, low: float, high: float) -> float:
     try:
         value = float(opts.get(name, default))

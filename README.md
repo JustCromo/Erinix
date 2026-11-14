@@ -95,3 +95,32 @@ See [SECURITY.md](SECURITY.md). Design notes: [docs/PLANNING.md](docs/PLANNING.m
 ## License
 
 MIT.
+
+
+## Watching a real machine
+
+```
+erinix watch                      # looks at this machine until Ctrl-C (settings found automatically)
+erinix watch --config my.toml     # or exactly what you choose
+erinix ui                         # the cockpit: incidents, live events, sources, programs, ports, connections
+```
+
+Without a settings file Erinix looks at what it can read: running programs and network connections (from `/proc`),
+SSH logins (journal or `/var/log/auth.log`), common web server logs, and Docker containers running Caddy, nginx or Apache.
+What it cannot read is shown in the dashboard with the reason. Settings live in `~/.config/erinix/config.toml`
+(or `/etc/erinix/config.toml`); the file must not be writable by others:
+
+```toml
+[agent]
+interval = 0.5
+
+[[source]]
+name = "Website"
+kind = "docker"          # file | journal | docker
+container = "caddy"
+format = "caddy"         # caddy | combined (nginx, Apache) | ssh
+```
+
+Honest limits: programs are found by looking at `/proc` every half second, so a program that lives less than that can be
+missed (kernel-level sensing with root is planned); without root only your own programs are tied to their connections;
+reading the journal needs the `systemd-journal` group; Docker needs the `docker` group.

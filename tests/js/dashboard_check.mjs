@@ -64,6 +64,7 @@ async function run({ hash = "#/", data = {}, status = 200, reject = false, needs
       const st = new URL(path, "http://x").searchParams.get("status") || "open";
       return ok({ incidents: live.incidents.filter(i => st === "all" || (st === "open" ? i.status === "open" : i.status === "closed")) });
     }
+    if (path === "/api/inventory") return ok(live.inventory || INVENTORY);
     if (path === "/api/settings") { live.themePosted = JSON.parse(opts.body).theme; live.overview = { ...live.overview, theme: live.themePosted }; return ok({ ok: true }); }   // the server remembers it
     return ok({}, 404);
   };
@@ -71,6 +72,10 @@ async function run({ hash = "#/", data = {}, status = 200, reject = false, needs
   await sleep(wait);
   return { w, doc: w.document, calls, live, close: () => w.close() };
 }
+const INVENTORY = { available: true, at: now(), host: { name: "pi", system: "Linux 6.8", machine: "aarch64", user: "ivan", root: false, version: "9.9.9" }, process_total: 3,
+  processes: [{ pid: 10, ppid: 1, uid: 0, name: "sshd", command: "/usr/sbin/sshd -D" }, { pid: 22, ppid: 1, uid: 1000, name: "caddy", command: "caddy run" }, { pid: 31, ppid: 1, uid: 1000, name: "python3", command: "python3 app.py" }],
+  listening: [{ local: "0.0.0.0:22", port: 22, pid: 10, program: "sshd", uid: 0, exposed: true }, { local: "127.0.0.1:8080", port: 8080, pid: 31, program: "python3", uid: 1000, exposed: false }],
+  connections: [{ local: "10.0.0.2:5000", port: 5000, pid: 22, program: "caddy", uid: 1000, remote: "1.2.3.4:443", external: true }] };
 const checks = {};
 const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || "";
 
@@ -79,17 +84,34 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
   const t = await run();
   const d = t.doc, rows = [...d.querySelectorAll(".inc")];
   checks.home_hero_says_the_top_incident = text(t.w, ".hero h1") === "Someone at 192.168.50.31 tried 2 different attacks on your website" && text(t.w, ".hero .eyebrow") === "Needs you now" && text(t.w, ".hero .lead").startsWith("Most serious");
-  checks.home_lists_three_incidents = rows.length === 3 && rows[0].querySelector(".inc-who").textContent === "192.168.50.31" && rows[0].textContent.includes("SQL injection") && rows[0].textContent.includes("See what happened →");
+  checks.home_lists_the_incidents = rows.length === 2 && rows[0].querySelector(".inc-who").textContent === "192.168.50.31" && rows[0].textContent.includes("SQL injection");
   checks.home_links_open_the_incident = rows[0].getAttribute("href") === "#/incidents/iabc123def4" && d.querySelector(".hero .btn.primary").getAttribute("href") === "#/incidents/iabc123def4";
-  checks.home_facts = text(t.w, ".facts").includes("Watching 3 of 4 sources") && text(t.w, ".facts").includes("events checked today") && !!d.querySelector('.facts a[href="#/system"]');
-  checks.home_has_a_small_live_feed = !!d.querySelector("#feed") && d.querySelector("#feed").getAttribute("data-limit") === "6" && !!d.querySelector('.feed-card a[href="#/live"]');
+  const tiles = [...d.querySelectorAll(".tile")].map(x => x.textContent);
+  checks.home_tiles = tiles.length === 6 && tiles[0].startsWith("3") && tiles[3].startsWith("3/4") && tiles[4].startsWith("3") && tiles[5].startsWith("2");
+  checks.home_has_a_live_feed_panel = !!d.querySelector(".c-live #feed.scroll") && !!d.querySelector('.c-live input.search');
+  const body = id => d.getElementById("p-" + id);
+  checks.home_panels_show_what_is_seen = body("programs").querySelectorAll(".row").length === 3 && body("ports").textContent.includes("Open to network") && body("ports").textContent.includes("This machine only")
+    && body("connections").textContent.includes("1.2.3.4:443") && body("sources").querySelectorAll(".row").length === 4 && d.getElementById("p-machine").textContent.includes("sees only its own programs");
+  checks.panels_scroll_themselves = ["incidents", "sources", "programs", "ports", "connections"].every(id => body(id).classList.contains("scroll"));
+  {
+    const input = d.querySelector('input[aria-label="Search programs…"]');
+    input.value = "caddy"; input.dispatchEvent(new t.w.Event("input"));
+    const one = body("programs").querySelectorAll(".row").length === 1 && d.querySelector('[data-count="programs"]').textContent === "1 / 3";
+    input.value = "zzz"; input.dispatchEvent(new t.w.Event("input"));
+    checks.panel_search_filters_in_place = one && body("programs").textContent.includes("Nothing matches") && d.contains(input);
+    input.value = ""; input.dispatchEvent(new t.w.Event("input"));
+    const tog = d.querySelector('.c-ports .btn.small'); tog.click();
+    checks.panel_toggle_filters = body("ports").querySelectorAll(".row").length === 1 && tog.getAttribute("aria-pressed") === "true";
+    const sTog = d.querySelector('.c-sources .btn.small'); sTog.click();
+    checks.sources_problems_only = body("sources").querySelectorAll(".row").length === 1 && body("sources").textContent.includes("Kernel");
+  }
   checks.home_has_no_duplicate_counters = d.querySelectorAll(".stat").length === 0 && !text(t.w, ".hero").includes("open alerts");
   checks.pill_and_nav = text(t.w, "#pill") === "✖ Needs you now" && text(t.w, "#nav-count") === "3" && !d.getElementById("nav-count").hidden && d.querySelectorAll("#nav a").length === 4;
-  checks.nav_marks_the_page = d.querySelector('#nav a[data-view="home"]').getAttribute("aria-current") === "page" && d.title === "Erinix · Home";
+  checks.nav_marks_the_page = d.querySelector('#nav a[data-view="home"]').getAttribute("aria-current") === "page" && d.title === "Erinix · Cockpit";
   checks.footer_version = text(t.w, "#version") === "v9.9.9";
   t.close();
-  const q = await run({ data: { overview: overview({ state: "protected", top: [] }) } });
-  checks.home_quiet = text(q.w, ".hero h1") === "Everything looks fine" && text(q.w, "#pill") === "✔ All quiet" && !q.doc.querySelector(".hero .btn.primary") && text(q.w, ".card .empty").includes("Nothing needs your attention") && q.doc.getElementById("nav-count").hidden;
+  const q = await run({ data: { overview: overview({ state: "protected", top: [] }), incidents: [] } });
+  checks.home_quiet = text(q.w, ".hero h1") === "All quiet" && text(q.w, "#pill") === "✔ All quiet" && !q.doc.querySelector(".hero .btn.primary") && text(q.w, "#p-incidents").includes("Nothing needs your attention") && q.doc.getElementById("nav-count").hidden;
   q.close();
   const s = await run({ data: { overview: overview({ state: "stopped", top: [], sources: [] }) } });
   checks.home_stopped = text(s.w, ".hero h1") === "Erinix is not watching" && text(s.w, "#pill") === "■ Not running";
