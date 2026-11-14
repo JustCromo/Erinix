@@ -9,8 +9,9 @@ from erinix.cli import main
 from erinix.store import Store
 from erinix.ui.theme import Theme
 
-REQUIRED = {"bg", "card", "card_2", "text", "muted", "faint", "border", "primary", "on_primary", "accent",
-            "ok", "low", "medium", "high", "critical", "on_critical", "shadow"}
+SEVERITY = ("ok", "low", "medium", "high", "critical")
+REQUIRED = {"bg", "card", "card_2", "text", "muted", "faint", "border", "primary", "on_primary", "accent", "medium_text", "shadow",
+            *SEVERITY, *(f"on_{s}" for s in SEVERITY)}
 HEX = re.compile(r"^#[0-9a-f]{6}$")
 COLOR = re.compile(r"^(#[0-9a-f]{6}|rgba\(\d{1,3}, ?\d{1,3}, ?\d{1,3}, ?\.?\d+\))$")
 STATIC = Path(P.__file__).parent / "web" / "static"
@@ -37,18 +38,31 @@ def test_every_variant_is_readable(variant):
         for label, fg, need in (("text", "text", 7), ("secondary text", "muted", 4.5), ("faint text", "faint", 4.5),
                                 ("links and titles", "primary", 4.5)):
             assert P.contrast(c[fg], c[surface]) >= need, (variant, surface, label, round(P.contrast(c[fg], c[surface]), 2))
-        for sev in ("ok", "low", "medium", "high", "critical"):
+        for sev in ("ok", "low", "medium_text", "high", "critical"):                 # as text on a surface
             assert P.contrast(c[sev], c[surface]) >= 4, (variant, surface, sev, round(P.contrast(c[sev], c[surface]), 2))
     assert P.contrast(c["on_primary"], c["primary"]) >= 4.5                      # the label of a button
-    assert P.contrast(c["on_critical"], c["critical"]) >= 4.5                    # the solid "critical" badge
-    assert P.contrast(c["on_critical"], c["high"]) >= 4.5                        # the solid "high" badge
+    for sev in SEVERITY:                                                         # solid badges: the label on its fill
+        assert P.contrast(c[f"on_{sev}"], c[sev]) >= 4.5, (variant, sev, round(P.contrast(c[f"on_{sev}"], c[sev]), 2))
     assert P.contrast(c["border"], c["bg"]) >= 1.1                               # borders are thin but visible
 
 
 @pytest.mark.parametrize("variant", list(P.VARIANTS))
 def test_severity_colours_stay_distinct(variant):
     c = P.VARIANTS[variant]
-    assert len({c[s] for s in ("ok", "low", "medium", "high", "critical")}) == 5
+    assert len({c[s] for s in SEVERITY}) == 5
+
+
+@pytest.mark.parametrize("variant", list(P.VARIANTS))
+def test_no_green_anywhere(variant):
+    """Green belongs to Nemirix: no colour of the palette may be greenish."""
+    import colorsys
+
+    for name, value in P.VARIANTS[variant].items():
+        if not value.startswith("#"):
+            continue
+        r, g, b = (int(value[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        hue, sat, _ = colorsys.rgb_to_hls(r, g, b)[0] * 360, colorsys.rgb_to_hls(r, g, b)[2], 0
+        assert not (75 <= hue <= 170 and sat > 0.12), (variant, name, value, round(hue))
 
 
 def test_contrast_maths():
@@ -110,13 +124,13 @@ def test_console_roles_come_from_the_dark_variant():
     assert set(roles) == {"accent", "brown", "border", "dim", "ok", "warn", "bad"}
     for rgb, idx, sgr in roles.values():
         assert all(0 <= v <= 255 for v in rgb) and 16 <= idx <= 231 and 30 <= sgr <= 97
-    assert roles["accent"][0] == (0xFF, 0x9E, 0x7D)
+    assert roles["accent"][0] == (0xB9, 0xB4, 0xFF)
     assert P.console_roles("light") == P.console_roles("dark")                  # terminals are dark: the setting does not change them
 
 
-def test_theme_paints_with_the_plum_palette():
-    plum, plain = Theme(3, True, palette="auto"), Theme(3, True)
-    assert "38;2;255;158;125" in plum.paint("x", "accent") and "38;2;226;122;63" in plain.paint("x", "accent")
+def test_theme_paints_with_the_stone_palette():
+    stone, plain = Theme(3, True, palette="auto"), Theme(3, True)
+    assert "38;2;185;180;255" in stone.paint("x", "accent") and "38;2;226;122;63" in plain.paint("x", "accent")
     assert Theme(0, True, palette="auto").paint("x", "accent") == "x"             # no colour, no change
     assert "38;5;" in Theme(2, True, palette="auto").paint("x", "accent")
     assert Theme.from_stream(palette="auto")._roles == P.console_roles()

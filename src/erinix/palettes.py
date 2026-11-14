@@ -1,6 +1,6 @@
-"""The Erinix colours ("Plum and peach") and the appearance setting shared by the dashboard and the console.
+"""The Erinix colours ("Stone and indigo") and the appearance setting shared by the dashboard and the console.
 
-One palette, two variants: light (peach paper, plum ink) and dark (night plum, peach ink).
+One palette, two variants: light (warm paper, indigo ink) and dark (warm stone, soft indigo ink).
 The setting is only which variant to use: "auto" follows the system, "light" and "dark" force one.
 The tests check the contrast of text, buttons and severity colours in both variants, so a pretty
 palette can never become a tiring one. The choice lives in the shared store (meta "theme"):
@@ -14,23 +14,28 @@ from typing import Mapping
 DEFAULT = "auto"
 
 LIGHT: Mapping[str, str] = {
-    "bg": "#fbede4", "card": "#fff8f3", "card_2": "#fbf0e8", "text": "#2e1b33", "muted": "#5f4766", "faint": "#6a5171",
-    "border": "#ebd3c8", "primary": "#7a2f7d", "on_primary": "#ffffff", "accent": "#f29a76",
-    "ok": "#3f7d4e", "low": "#427088", "medium": "#9a6414", "high": "#b8481f", "critical": "#a63232", "on_critical": "#ffffff",
-    "shadow": "rgba(46, 27, 51, .10)",
+    "bg": "#f6f1ea", "card": "#fffcf7", "card_2": "#faf6f0", "text": "#2b2420", "muted": "#6a5d54", "faint": "#6f6258",
+    "border": "#e3d9ce", "primary": "#3f3a8c", "on_primary": "#ffffff", "accent": "#c77d5e",
+    # severity: strong fills (badges, stripes) with the colour of the text that sits on them; no green (kept for Nemirix)
+    "ok": "#1d63c4", "low": "#566685", "medium": "#e9a21a", "high": "#cc4a0b", "critical": "#c4122f",
+    "on_ok": "#ffffff", "on_low": "#ffffff", "on_medium": "#2b2420", "on_high": "#ffffff", "on_critical": "#ffffff",
+    "medium_text": "#8f5b00",                                  # amber that stays readable as text on paper
+    "shadow": "rgba(43, 36, 32, .10)",
 }
 DARK: Mapping[str, str] = {
-    "bg": "#1c1022", "card": "#28172f", "card_2": "#22132a", "text": "#f6e8f0", "muted": "#cdb6d3", "faint": "#b79fc0",
-    "border": "#43284d", "primary": "#ff9e7d", "on_primary": "#1c1022", "accent": "#c77ddb",
-    "ok": "#7fc08e", "low": "#7fb0c8", "medium": "#e0ae4a", "high": "#e88b5f", "critical": "#f07a7a", "on_critical": "#1c1022",
+    "bg": "#1b1716", "card": "#262120", "card_2": "#211c1b", "text": "#f3ede6", "muted": "#cfc3b8", "faint": "#b0a398",
+    "border": "#3a3230", "primary": "#b9b4ff", "on_primary": "#1b1716", "accent": "#e8b4a0",
+    "ok": "#6fb1ff", "low": "#a3b1d1", "medium": "#ffc247", "high": "#ff8447", "critical": "#ff5468",
+    "on_ok": "#1b1716", "on_low": "#1b1716", "on_medium": "#1b1716", "on_high": "#1b1716", "on_critical": "#1b1716",
+    "medium_text": "#ffc247",
     "shadow": "rgba(0, 0, 0, .35)",
 }
 VARIANTS: dict[str, Mapping[str, str]] = {"light": LIGHT, "dark": DARK}
 
 MODES: dict[str, tuple[str, str]] = {
     "auto": ("Automatic", "Follows your system: light by day, dark at night."),
-    "light": ("Light", "Peach paper and plum ink."),
-    "dark": ("Dark", "Night plum and peach ink."),
+    "light": ("Light", "Warm paper and indigo ink."),
+    "dark": ("Dark", "Warm stone and soft indigo ink."),
 }
 
 
@@ -111,5 +116,5 @@ def console_roles(name: str | None = None) -> dict[str, tuple[tuple[int, int, in
         return round(r1 + (r2 - r1) * t), round(g1 + (g2 - g1) * t), round(b1 + (b2 - b1) * t)
 
     rgbs = {"accent": _rgb(c["primary"]), "brown": _rgb(c["muted"]), "border": mix(c["muted"], c["card"], 0.55), "dim": _rgb(c["faint"]),
-            "ok": _rgb(c["ok"]), "warn": _rgb(c["medium"]), "bad": _rgb(c["high"])}
+            "ok": _rgb(c["ok"]), "warn": _rgb(c["medium_text"]), "bad": _rgb(c["high"])}
     return {role: (rgb, rgb_to_256(rgb), BASE[role][2]) for role, rgb in rgbs.items()}

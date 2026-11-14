@@ -61,7 +61,7 @@ A menu on the left leads to four pages:
   active right now sit above the stream. Each attack shows its steps as done, happening now or still to come.
 - **System**: what Erinix watches (and what it cannot see), a chart of the last 24 hours, and the colours.
 
-Look: one palette, "Plum and peach", in a light and a dark variant. The dashboard follows your system by default;
+Look: one palette, "Stone and indigo" (warm paper, indigo ink), in a light and a dark variant. The dashboard follows your system by default;
 force one in **System > Appearance** or with `erinix theme light|dark|auto`. The console always uses the dark variant.
 Fonts and icons ship with Erinix (Nunito, SIL Open Font License): the page never loads anything from the internet.
 
