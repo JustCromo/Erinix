@@ -25,12 +25,26 @@
           <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-pulse"/></svg>
           <span class="lbl">Live</span></a>
         <span class="nav-group">This machine</span>
+        <a href="#/programs" data-view="programs">
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-cpu"/></svg>
+          <span class="lbl">Programs</span></a>
+        <a href="#/network" data-view="network">
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-globe"/></svg>
+          <span class="lbl">Network</span></a>
+        <a href="#/sources" data-view="sources">
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-eye"/></svg>
+          <span class="lbl">Sources</span></a>
+        <span class="nav-group">Erinix</span>
         <a href="#/system" data-view="system">
           <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-gear"/></svg>
           <span class="lbl">System</span></a>
       </nav>
       <div class="side-foot">
-        <div id="pill" class="pill state-stopped" role="status" aria-live="polite">Connecting…</div>
+        <div class="foot-row">
+          <div id="pill" class="pill state-stopped" role="status" aria-live="polite">Connecting…</div>
+          <button id="theme-toggle" class="icon-btn" type="button" aria-label="Switch to dark theme" title="Switch to dark theme">
+            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-moon"/></svg></button>
+        </div>
         <p class="tiny">Erinix · Nemirix suite <span id="version"></span></p>
       </div>
     </aside>

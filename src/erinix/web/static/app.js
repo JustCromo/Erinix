@@ -30,12 +30,13 @@
     expired: "This sign-in link has expired.",
     unavailable: "Erinix could not read its data. Try: erinix doctor",
   };
-  const PAGE_NAMES = { home: "Cockpit", incidents: "Incidents", live: "Live", system: "System" };
+  const PAGE_NAMES = { home: "Cockpit", incidents: "Incidents", live: "Live", programs: "Programs", network: "Network", sources: "Sources", system: "System" };
+  const ROUTINE = ["process.exec", "net.connect", "net.accept", "net.listen"];   // normal life of a machine: hidden in the live view until asked for
 
   const state = {
     overview: null, incidents: [], detail: null, selected: null, filter: "open", tag: null,
     csrf: null, version: "", locked: false, error: null, open: {}, lastKey: "", loginError: "", renderedView: "",
-    feed: { events: [], lastId: 0, paused: false, pausedAt: null, queued: 0, only: false, loaded: false, q: "" },
+    feed: { events: [], lastId: 0, paused: false, pausedAt: null, queued: 0, only: false, loaded: false, q: "", routine: false },
     inv: null, q: {}, f: {}, openIncidents: [],
   };
   const app = document.getElementById("app");
@@ -102,7 +103,10 @@
     const hash = location.hash || "#/";
     let m;
     if (hash.indexOf("#/live") === 0) return { view: "live", id: null };
-    if (hash.indexOf("#/system") === 0 || hash.indexOf("#/sources") === 0) return { view: "system", id: null };
+    if (hash.indexOf("#/programs") === 0) return { view: "programs", id: null };
+    if (hash.indexOf("#/network") === 0) return { view: "network", id: null };
+    if (hash.indexOf("#/sources") === 0) return { view: "sources", id: null };
+    if (hash.indexOf("#/system") === 0) return { view: "system", id: null };
     m = /^#\/incidents(?:\/([A-Za-z0-9_-]{1,40}))?/.exec(hash);
     if (m) return { view: "incidents", id: m[1] || null };
     if (hash.indexOf("#/alerts") === 0) return { view: "incidents", id: null };
@@ -153,15 +157,15 @@
       } else if (r.view === "live" || r.view === "home") {
         incidents = (await request("GET", "/api/incidents?status=open")).incidents;
       }
-      if (r.view === "home" || r.view === "system") {
+      if (["home", "system", "programs", "network", "sources"].indexOf(r.view) >= 0) {
         try { state.inv = await request("GET", "/api/inventory"); }
         catch (err) { if (err.message === "locked") throw err; }
       }
       // Counters and the chart change all the time: they are updated in place, never by redrawing the page.
       const stable = Object.assign({}, overview);
-      ["heartbeat_age", "events_24h", "alerts_24h", "activity"].forEach(function (k) { delete stable[k]; });
+      ["heartbeat_age", "events_24h", "alerts_24h", "activity", "sources"].forEach(function (k) { delete stable[k]; });   // these change all the time: updated in place
       const key = JSON.stringify([stable, incidents, detail, state.filter, state.tag, r, selected,
-        r.view === "live" ? activeNow(incidents).map(function (i) { return i.id; }) : null, r.view === "home" ? [incidents, overview.sources] : null]);
+        r.view === "live" ? activeNow(incidents).map(function (i) { return i.id; }) : null, r.view === "home" ? incidents : null, [overview.sources.length, overview.sources.filter(function (x) { return x.state === "ok"; }).length]]);
       state.overview = overview; state.incidents = incidents; state.detail = detail; state.selected = selected; state.error = null;
       if (key !== state.lastKey) { state.lastKey = key; render(); }
       updateLive(overview);
@@ -194,6 +198,23 @@
     if (name === "auto") root.removeAttribute("data-theme");
     else if (root.getAttribute("data-theme") !== name) root.setAttribute("data-theme", name);
   }
+
+  // one button: sun in the dark theme, moon in the light one; it flips between the two (the system chooses until you click)
+  function effectiveTheme() {
+    const t = state.overview && state.overview.theme;
+    if (t === "light" || t === "dark") return t;
+    return typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  function updateThemeButton() {
+    const b = document.getElementById("theme-toggle");
+    if (!b) return;
+    const dark = effectiveTheme() === "dark", label = dark ? "Switch to light theme" : "Switch to dark theme";
+    b.setAttribute("aria-label", label); b.setAttribute("title", label);
+    const use = b.querySelector("use");
+    if (use) use.setAttribute("href", "/static/icons.svg#" + (dark ? "i-sun" : "i-moon"));
+  }
+  const themeButton = document.getElementById("theme-toggle");
+  if (themeButton) themeButton.addEventListener("click", function () { if (state.overview) chooseTheme(effectiveTheme() === "dark" ? "light" : "dark"); });
 
   // ------------------------------------------------------------------ pieces
   function badge(name) {
@@ -296,8 +317,9 @@
   // --------------------------------------------------------- the live stream
   function visibleEvents() {
     const f = state.feed;
-    return f.events.filter(function (e) { return (!f.only || e.alert) && (f.pausedAt === null || e.id <= f.pausedAt) && matches(eventText(e), f.q); });
+    return f.events.filter(function (e) { return (!f.only || e.alert) && (f.routine || !isRoutine(e)) && (f.pausedAt === null || e.id <= f.pausedAt) && matches(eventText(e), f.q); });
   }
+  function isRoutine(e) { return !e.alert && ROUTINE.indexOf(e.kind) >= 0; }
   function eventText(e) { return [e.label, e.summary, e.remote, e.tag].join(" "); }
   function feedRow(e, entering) {
     const id = safeId(e.incident);
@@ -311,7 +333,8 @@
   function fillFeed(ul, limit) {
     const rows = visibleEvents().slice(-limit).reverse();
     ul.replaceChildren.apply(ul, rows.length ? rows.map(function (e) { return feedRow(e, false); })
-      : [h("li", { class: "ev-empty" }, state.feed.q ? "No event matches your search." : state.feed.only ? "No suspicious events yet." : "Waiting for events…")]);
+      : [h("li", { class: "ev-empty" }, state.feed.q ? "No event matches your search." : state.feed.only ? "No suspicious events yet."
+        : !state.feed.routine && state.feed.events.length ? "Only routine activity so far. Turn on “Show routine activity” to see it." : "Waiting for events…")]);
   }
   function refillFeed() {
     const ul = document.getElementById("feed");
@@ -321,7 +344,7 @@
     const ul = document.getElementById("feed");
     if (!ul) return;
     const limit = Number(ul.getAttribute("data-limit")) || 100;
-    const shown = fresh.filter(function (e) { return (!state.feed.only || e.alert) && matches(eventText(e), state.feed.q); });
+    const shown = fresh.filter(function (e) { return (!state.feed.only || e.alert) && (state.feed.routine || !isRoutine(e)) && matches(eventText(e), state.feed.q); });
     if (!shown.length) return;
     const empty = ul.querySelector(".ev-empty");
     if (empty) empty.remove();
@@ -333,7 +356,10 @@
     const pause = document.querySelector('[data-action="pause"]'), only = document.querySelector('[data-action="only"]');
     if (pause) { pause.textContent = f.paused ? "Resume" + (f.queued ? " (" + f.queued + " new)" : "") : "Pause"; pause.setAttribute("aria-pressed", f.paused ? "true" : "false"); }
     if (only) only.setAttribute("aria-pressed", f.only ? "true" : "false");
+    const routine = document.querySelector('[data-action="routine"]');
+    if (routine) routine.setAttribute("aria-pressed", f.routine ? "true" : "false");
   }
+  function toggleRoutine() { state.feed.routine = !state.feed.routine; refillFeed(); updateFeedControls(); }
   function togglePause() {
     const f = state.feed;
     f.paused = !f.paused;
@@ -348,7 +374,8 @@
       h("span", { class: "live-pill" }, h("span", { class: "live-dot", "aria-hidden": "true" }), "Live"),
       searchBox("Search events…", f.q, function (v) { state.feed.q = v; refillFeed(); }),
       h("button", { class: "btn small", type: "button", "data-action": "pause", "aria-pressed": f.paused ? "true" : "false", onclick: togglePause }, f.paused ? "Resume" : "Pause"),
-      h("button", { class: "btn small", type: "button", "data-action": "only", "aria-pressed": f.only ? "true" : "false", onclick: toggleOnly }, "Only suspicious"));
+      h("button", { class: "btn small", type: "button", "data-action": "only", "aria-pressed": f.only ? "true" : "false", onclick: toggleOnly }, "Only suspicious"),
+      h("button", { class: "btn small", type: "button", "data-action": "routine", "aria-pressed": f.routine ? "true" : "false", onclick: toggleRoutine }, "Show routine activity"));
   }
   function feedList(limit) {
     const ul = h("ul", { id: "feed", class: "feed scroll", "data-limit": limit });
@@ -436,14 +463,12 @@
   }
 
   // ------------------------------------------------------------------- views
-  // ------------------------------------------------- cockpit panels (fixed size, own scroll, own search)
+  // ------------------------------------------------- panels: a short summary on the cockpit, a full table on its own page
   function sourceRow(x) {
     const ok = x.state === "ok";
     return h("li", { class: "row src" + (ok ? "" : " bad") },
       h("span", { class: ok ? "ok" : "warn", "aria-hidden": "true" }, ok ? "✔" : "▲"),
-      h("div", { class: "row-main" }, h("strong", null, x.name), h("span", { class: "row-sub" }, x.detail || (ok ? "Watching" : "Blind"))),
-      typeof x.lines === "number" ? h("span", { class: "row-aside", title: "lines read · understood · ignored" },
-        fmt(x.lines) + " read · " + fmt(x.understood) + " understood" + (x.ignored ? " · " + fmt(x.ignored) + " ignored" : "")) : null);
+      h("div", { class: "row-main" }, h("strong", null, x.name), h("span", { class: "row-sub" }, x.detail || (ok ? "Watching" : "Blind"))));
   }
   function programRow(p) {
     return h("li", { class: "row prog" }, h("span", { class: "row-key mono" }, String(p.pid)),
@@ -460,63 +485,95 @@
       h("div", { class: "row-main" }, h("strong", null, c.program || "unknown program"), h("span", { class: "row-sub mono" }, c.local + " → " + c.remote)),
       h("span", { class: "tag" + (c.external ? " flag" : "") }, c.external ? "Internet" : "Local network"));
   }
+  function stateCell(x) { return h("span", { class: x.state === "ok" ? "ok" : "warn" }, x.state === "ok" ? "✔ Watching" : "▲ Blind"); }
+  function activityText(x) {
+    return typeof x.lines === "number" ? fmt(x.lines) + " read · " + fmt(x.understood) + " understood" + (x.ignored ? " · " + fmt(x.ignored) + " ignored" : "") : "—";
+  }
+  function reachTag(flag, yes, no) { return h("span", { class: "tag" + (flag ? " flag" : "") }, flag ? yes : no); }
   const PANELS = {
-    incidents: { title: "Incidents", search: "Search incidents…", empty: "Nothing needs your attention.",
+    incidents: { title: "Incidents", page: "#/incidents", limit: 4, stack: true, empty: "Nothing needs your attention.",
       rows: function () { return state.incidents.filter(function (i) { return i.status === "open"; }); },
       text: function (i) { return [i.who, i.headline, (i.tags || []).join(" ")].join(" "); }, row: function (i) { return incidentRow(i, "panel"); } },
-    sources: { title: "Sources", search: "Search sources…", toggle: "Problems only", empty: "No sources are configured yet. Run: erinix watch",
-      rows: function () { return state.overview ? state.overview.sources : []; },
-      keep: function (x) { return x.state !== "ok"; }, text: function (x) { return x.name + " " + (x.detail || ""); }, row: sourceRow },
-    programs: { title: "Programs", search: "Search programs…", empty: "Waiting for the agent. Run: erinix watch",
+    sources: { title: "Sources", page: "#/sources", limit: 6, search: "Search sources…", toggle: "Problems only", empty: "No sources are configured yet. Run: erinix watch",
+      rows: function () { return state.overview ? state.overview.sources : []; }, rank: function (x) { return x.state === "ok" ? 1 : 0; },
+      keep: function (x) { return x.state !== "ok"; }, text: function (x) { return x.name + " " + (x.detail || ""); }, row: sourceRow, flag: function (x) { return x.state !== "ok"; },
+      cols: [{ h: "Status", c: stateCell }, { h: "Source", c: function (x) { return h("strong", null, x.name); } }, { h: "Details", c: function (x) { return x.detail || ""; } }, { h: "Activity", c: activityText }] },
+    programs: { title: "Programs", page: "#/programs", limit: 6, search: "Search programs…", empty: "Waiting for the agent. Run: erinix watch",
       rows: function () { return state.inv ? state.inv.processes : []; },
-      text: function (p) { return [p.pid, p.name, p.command, userName(p.uid)].join(" "); }, row: programRow },
-    ports: { title: "Listening ports", search: "Search ports…", toggle: "Open to network", empty: "Waiting for the agent. Run: erinix watch",
-      rows: function () { return state.inv ? state.inv.listening : []; },
-      keep: function (p) { return p.exposed; }, text: function (p) { return [p.port, p.program, p.local].join(" "); }, row: portRow },
-    connections: { title: "Connections", search: "Search connections…", toggle: "Internet only", empty: "No connection seen yet.",
-      rows: function () { return state.inv ? state.inv.connections : []; },
-      keep: function (c) { return c.external; }, text: function (c) { return [c.program, c.local, c.remote, c.pid].join(" "); }, row: connRow },
+      text: function (p) { return [p.pid, p.name, p.command, userName(p.uid)].join(" "); }, row: programRow,
+      cols: [{ h: "PID", c: function (p) { return h("span", { class: "mono" }, String(p.pid)); } }, { h: "Program", c: function (p) { return h("strong", null, p.name); } },
+        { h: "Command", c: function (p) { return h("span", { class: "mono" }, p.command); } }, { h: "User", c: function (p) { return userName(p.uid); } }] },
+    ports: { title: "Listening ports", page: "#/network", limit: 6, search: "Search ports…", toggle: "Open to network", empty: "Waiting for the agent. Run: erinix watch",
+      rows: function () { return state.inv ? state.inv.listening : []; }, rank: function (p) { return p.exposed ? 0 : 1; },
+      keep: function (p) { return p.exposed; }, text: function (p) { return [p.port, p.program, p.local].join(" "); }, row: portRow, flag: function (p) { return p.exposed; },
+      cols: [{ h: "Port", c: function (p) { return h("span", { class: "mono" }, String(p.port)); } }, { h: "Program", c: function (p) { return h("strong", null, p.program || "unknown program"); } },
+        { h: "Address", c: function (p) { return h("span", { class: "mono" }, p.local); } }, { h: "Reachable from", c: function (p) { return reachTag(p.exposed, "Open to network", "This machine only"); } }] },
+    connections: { title: "Connections", page: "#/network", limit: 6, search: "Search connections…", toggle: "Internet only", empty: "No connection seen yet.",
+      rows: function () { return state.inv ? state.inv.connections : []; }, rank: function (c) { return c.external ? 0 : 1; },
+      keep: function (c) { return c.external; }, text: function (c) { return [c.program, c.local, c.remote, c.pid].join(" "); }, row: connRow,
+      cols: [{ h: "PID", c: function (c) { return h("span", { class: "mono" }, c.pid ? String(c.pid) : "?"); } }, { h: "Program", c: function (c) { return h("strong", null, c.program || "unknown program"); } },
+        { h: "From", c: function (c) { return h("span", { class: "mono" }, c.local); } }, { h: "To", c: function (c) { return h("span", { class: "mono" }, c.remote); } },
+        { h: "Where", c: function (c) { return reachTag(c.external, "Internet", "Local network"); } }] },
   };
+  Object.keys(PANELS).forEach(function (k) { PANELS[k].id = k; });
+  function tableOf(spec, rows) {
+    return h("div", { class: "table t-" + spec.id, role: "table", "aria-label": spec.title },
+      h("div", { class: "trow thead", role: "row" }, spec.cols.map(function (c) { return h("span", { role: "columnheader" }, c.h); })),
+      rows.map(function (r) {
+        return h("div", { class: "trow" + (spec.flag && spec.flag(r) ? " flagged" : ""), role: "row" }, spec.cols.map(function (c) { return h("span", { role: "cell" }, c.c(r)); }));
+      }));
+  }
   function fillPanel(id) {
     const spec = PANELS[id], body = document.getElementById("p-" + id);
     if (!spec || !body) return;
-    const all = spec.rows(), q = state.q[id] || "", only = !!state.f[id];
-    const rows = all.filter(function (r) { return (!only || spec.keep(r)) && matches(spec.text(r), q); });
+    const compact = body.getAttribute("data-mode") === "compact";
+    const all = spec.rows(), q = compact ? "" : state.q[id] || "", only = compact ? false : !!state.f[id];
+    let rows = all.filter(function (r) { return (!only || spec.keep(r)) && matches(spec.text(r), q); });
+    const total = rows.length;
+    if (compact) {                                                   // the notable rows first, and only a few
+      if (spec.rank) rows = rows.map(function (r, i) { return [spec.rank(r), i, r]; }).sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; }).map(function (x) { return x[2]; });
+      rows = rows.slice(0, spec.limit);
+    }
     const count = document.querySelector('[data-count="' + id + '"]');
-    if (count) count.textContent = rows.length === all.length ? String(all.length) : rows.length + " / " + all.length;
-    const key = JSON.stringify([rows, q, only]);
+    if (count) count.textContent = compact || total === all.length ? String(all.length) : total + " / " + all.length;
+    const key = JSON.stringify([rows, q, only, compact]);
     if (body.getAttribute("data-k") === key) return;               // nothing changed: leave the scroll position alone
     body.setAttribute("data-k", key);
-    body.replaceChildren.apply(body, rows.length ? [h("ul", { class: "rows" }, rows.map(spec.row))]
-      : [h("p", { class: "empty pad" }, all.length ? "Nothing matches." : spec.empty)]);
+    let content;
+    if (!rows.length) content = h("p", { class: "empty pad" }, all.length ? "Nothing matches." : spec.empty);
+    else if (compact) content = spec.stack ? h("div", { class: "stack" }, rows.map(spec.row)) : h("ul", { class: "rows" }, rows.map(spec.row));
+    else content = tableOf(spec, rows);
+    body.replaceChildren(content);
   }
   function panelHead(title, id, controls) {
     return h("div", { class: "panel-head" }, h("h2", null, title), id ? h("span", { class: "panel-count", "data-count": id }, "") : null, controls);
   }
-  function panel(id, cls) {
+  function panel(id, cls, compact) {
     const spec = PANELS[id];
-    const controls = h("div", { class: "panel-tools" },
+    const controls = compact ? (spec.page ? h("a", { class: "more", href: spec.page }, "See all →") : null) : h("div", { class: "panel-tools" },
       spec.toggle ? h("button", { class: "btn small", type: "button", "aria-pressed": state.f[id] ? "true" : "false", onclick: function (ev) {
         state.f[id] = !state.f[id]; ev.currentTarget.setAttribute("aria-pressed", state.f[id] ? "true" : "false"); fillPanel(id); } }, spec.toggle) : null,
-      searchBox(spec.search, state.q[id], function (v) { state.q[id] = v; fillPanel(id); }));
-    const el = h("section", { class: "panel card " + (cls || ""), "aria-label": spec.title }, panelHead(spec.title, id, controls), h("div", { id: "p-" + id, class: "panel-body scroll" }));
-    return el;
+      spec.search ? searchBox(spec.search, state.q[id], function (v) { state.q[id] = v; fillPanel(id); }) : null);
+    return h("section", { class: "panel card " + (compact ? "compact " : "") + (cls || ""), "aria-label": spec.title }, panelHead(spec.title, id, controls),
+      h("div", { id: "p-" + id, class: "panel-body scroll", "data-mode": compact ? "compact" : "full" }));
   }
-  function tile(label, value, attrs, tone) {
-    return h("div", { class: "tile" + (tone ? " " + tone : "") }, h("strong", attrs, value), h("span", null, label));
+  function tile(label, value, attrs, tone, href) {
+    return h(href ? "a" : "div", href ? { class: "tile" + (tone ? " " + tone : ""), href: href } : { class: "tile" + (tone ? " " + tone : "") }, h("strong", attrs, value), h("span", null, label));
   }
-  function machinePanel(o) {
-    const el = h("section", { class: "panel card", "aria-label": "This machine" }, panelHead("This machine"), h("div", { id: "p-machine", class: "panel-body scroll" }));
-    return el;
+  function machineRows(o) {
+    const inv = state.inv || {}, host = inv.host || {};
+    return [["Name", host.name], ["System", host.system], ["Hardware", host.machine],
+      ["Agent runs as", host.user ? host.user + (host.root ? " (root: sees every user)" : " (sees only its own programs)") : null],
+      ["Mode", o.demo ? "Demo data (simulated)" : o.mode === "live" ? "Live monitoring" : "Not monitoring"], ["Watching since", o.since ? when(o.since) : null], ["Version", o.version]]
+      .filter(function (r) { return r[1]; });
+  }
+  function machinePanel() {
+    return h("section", { class: "panel card compact c-machine", "aria-label": "This machine" }, panelHead("This machine", null, h("a", { class: "more", href: "#/system" }, "Details →")), h("div", { id: "p-machine", class: "panel-body scroll" }));
   }
   function fillMachine(o) {
     const body = document.getElementById("p-machine");
     if (!body) return;
-    const inv = state.inv || {}, host = inv.host || {};
-    const rows = [["Name", host.name], ["System", host.system], ["Hardware", host.machine], ["Agent runs as", host.user ? host.user + (host.root ? " (root: sees every user)" : " (sees only its own programs)") : null],
-      ["Mode", o.demo ? "Demo data (simulated)" : o.mode === "live" ? "Live monitoring" : "Not monitoring"], ["Watching since", o.since ? when(o.since) : null], ["Version", o.version]]
-      .filter(function (r) { return r[1]; });
-    const key = JSON.stringify(rows);
+    const rows = machineRows(o), key = JSON.stringify(rows);
     if (body.getAttribute("data-k") === key) return;
     body.setAttribute("data-k", key);
     body.replaceChildren(h("dl", { class: "tech flat" }, rows.map(function (r) { return techRow(r[0], r[1]); })));
@@ -548,24 +605,36 @@
           h("div", { class: "hero-text" }, h("p", { class: "eyebrow" }, st.label), h("h1", null, headline), h("p", { class: "lead" }, lead),
             first ? h("div", { class: "hero-actions" }, h("a", { class: "btn primary", href: "#/incidents/" + first }, "See what happened")) : null)),
         h("div", { class: "tiles" },
-          tile("open incidents", fmt(n), null, n ? "hot" : ""),
-          tile("events today", fmt(o.events_24h), { "data-live": "events_24h" }),
-          tile("alerts today", fmt(o.alerts_24h), { "data-live": "alerts_24h" }),
-          tile("sources watching", watching + "/" + total, null, blind ? "cool" : ""),
-          tile("programs seen", state.inv ? fmt(state.inv.process_total) : "–", { "data-inv": "process_total" }),
-          tile("listening ports", state.inv ? fmt(state.inv.listening.length) : "–", { "data-inv": "listening" }))),
+          tile("open incidents", fmt(n), null, n ? "hot" : "", "#/incidents"),
+          tile("events today", fmt(o.events_24h), { "data-live": "events_24h" }, "", "#/live"),
+          tile("alerts today", fmt(o.alerts_24h), { "data-live": "alerts_24h" }, "", "#/incidents"),
+          tile("sources watching", watching + "/" + total, null, blind ? "cool" : "", "#/sources"),
+          tile("programs seen", state.inv ? fmt(state.inv.process_total) : "–", { "data-inv": "process_total" }, "", "#/programs"),
+          tile("listening ports", state.inv ? fmt(state.inv.listening.length) : "–", { "data-inv": "listening" }, "", "#/network"))),
       h("div", { class: "cockpit" },
-        panel("incidents", "c-incidents"),
+        panel("incidents", "c-incidents", true),
         h("section", { class: "panel card c-live", "aria-label": "Live activity" },
-          panelHead("Live activity", null, feedControls()), feedList(FEED_SHOWN.home)),
-        panel("sources", "c-sources"),
-        panel("ports", "c-ports"),
-        panel("connections", "c-conns"),
-        panel("programs", "c-progs"),
-        h("section", { class: "panel card c-chart", "aria-label": "Activity" }, panelHead("Last 24 hours"),
+          panelHead("Live activity", null, h("a", { class: "more", href: "#/live" }, "Open live →")), feedControls(), feedList(FEED_SHOWN.home)),
+        panel("sources", "c-sources", true),
+        panel("ports", "c-ports", true),
+        panel("connections", "c-conns", true),
+        h("section", { class: "panel card compact c-chart", "aria-label": "Activity" }, panelHead("Last 24 hours"),
           h("div", { id: "spark-holder", class: "panel-body", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity))),
-        machinePanel(o)),
+        machinePanel()),
     ];
+  }
+
+  // ---------------------------------------------------- pages with a full table
+  function viewPrograms() {
+    return [pageHead("Programs", "Everything running on this machine, newest first."), h("div", { class: "fill" }, panel("programs", ""))];
+  }
+  function viewNetwork() {
+    return [pageHead("Network", "What this machine offers to the network, and who it talks to."), h("div", { class: "fill two" }, panel("ports", ""), panel("connections", ""))];
+  }
+  function viewSources(o) {
+    return [pageHead("Sources", "Where Erinix reads from, and whether it can."), h("div", { class: "fill" }, panel("sources", "")),
+      o.blind_spots.length ? h("section", { class: "card" }, h("h2", null, "Blind spots"),
+        h("ul", { class: "plain" }, o.blind_spots.map(function (b) { return h("li", null, h("span", { class: "warn" }, "▲ "), b); }))) : null];
   }
 
   function incidentTypes() {
@@ -631,32 +700,18 @@
     ];
   }
 
-  function swatch(color) {
-    const dot = h("i");
-    if (/^#[0-9a-fA-F]{6}$/.test(color)) dot.style.background = color;
-    return dot;
-  }
   function viewSystem(o) {
     const mode = o.demo ? "Demo data (simulated attacks)" : o.mode === "live" ? "Live monitoring" : "Not monitoring";
-    const rows = o.sources.map(function (s) {
-      return h("tr", null, h("td", null, s.name), h("td", null, s.state === "ok" ? h("span", { class: "ok" }, "✔ Watching") : h("span", { class: "warn" }, "▲ Blind")), h("td", null, s.detail || ""), h("td", { class: "num" }, typeof s.lines === "number" ? fmt(s.lines) + " read, " + fmt(s.understood) + " understood" : ""));
-    });
     return [
-      pageHead("System", "What Erinix watches, how it looks, and what is coming."),
-      h("section", { class: "card" }, h("h2", null, "Status"),
-        h("dl", { class: "tech" }, techRow("State", (STATES[o.state] || STATES.stopped).label), techRow("Mode", mode), o.since ? techRow("Watching since", when(o.since)) : null, techRow("Version", o.version))),
-      h("section", { class: "card" }, h("h2", null, "What Erinix watches"),
-        rows.length ? h("table", null, h("thead", null, h("tr", null, h("th", null, "Source"), h("th", null, "Status"), h("th", null, "Details"), h("th", null, "Activity"))), h("tbody", null, rows))
-          : h("p", { class: "empty" }, "No sources are configured yet."),
-        o.blind_spots.length ? h("ul", { class: "plain" }, o.blind_spots.map(function (b) { return h("li", null, h("span", { class: "warn" }, "▲ "), "Blind spot: " + b); })) : null),
+      pageHead("System", "This machine, Erinix itself, and what is coming."),
+      h("div", { class: "two-cols" },
+        h("section", { class: "card" }, h("h2", null, "Erinix"),
+          h("dl", { class: "tech" }, techRow("State", (STATES[o.state] || STATES.stopped).label), techRow("Mode", mode), o.since ? techRow("Watching since", when(o.since)) : null, techRow("Version", o.version))),
+        h("section", { class: "card" }, h("h2", null, "This machine"),
+          h("dl", { class: "tech", id: "sys-machine" }, machineRows(o).filter(function (r) { return ["Name", "System", "Hardware", "Agent runs as"].indexOf(r[0]) >= 0; }).map(function (r) { return techRow(r[0], r[1]); })))),
       h("section", { class: "card" }, h("h2", null, "Last 24 hours"), h("div", { id: "spark-holder", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity)),
         h("p", { class: "facts" }, h("span", null, h("strong", { "data-live": "events_24h" }, fmt(o.events_24h)), " events checked"),
           h("span", null, h("strong", { "data-live": "alerts_24h" }, fmt(o.alerts_24h)), " alerts raised"))),
-      h("section", { class: "card" }, h("h2", null, "Appearance"),
-        h("div", { class: "palettes", role: "group", "aria-label": "Appearance" }, (o.themes || []).map(function (p) {
-          return h("button", { class: "pal", type: "button", "data-theme": p.name, "aria-pressed": o.theme === p.name ? "true" : "false", onclick: function () { chooseTheme(p.name); } },
-            h("span", { class: "swatches" }, (p.swatch || []).map(swatch)), h("strong", null, p.label), h("span", { class: "blurb" }, p.blurb));
-        }))),
       h("section", { class: "card" }, h("h2", null, "Assessment"),
         h("div", { class: "soon" }, h("span", { class: "tag" }, "Coming soon"), h("span", null, "A vulnerability and risk assessment of this machine will live here."))),
     ];
@@ -699,7 +754,9 @@
     count.hidden = !open;
     count.textContent = String(open);
     applyTheme(o.theme);
-    const body = view === "live" ? viewLive(o) : view === "incidents" ? viewIncidents(o) : view === "system" ? viewSystem(o) : viewHome(o);
+    updateThemeButton();
+    const views = { live: viewLive, incidents: viewIncidents, system: viewSystem, programs: viewPrograms, network: viewNetwork, sources: viewSources };
+    const body = (views[view] || viewHome)(o);
     const y = window.scrollY, same = state.renderedView === view;
     const focus = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("search") ? document.activeElement : null;
     const focusKey = focus ? focus.getAttribute("aria-label") : null, caret = focus ? focus.selectionStart : 0;

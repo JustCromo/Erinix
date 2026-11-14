@@ -90,23 +90,15 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
   checks.home_tiles = tiles.length === 6 && tiles[0].startsWith("3") && tiles[3].startsWith("3/4") && tiles[4].startsWith("3") && tiles[5].startsWith("2");
   checks.home_has_a_live_feed_panel = !!d.querySelector(".c-live #feed.scroll") && !!d.querySelector('.c-live input.search');
   const body = id => d.getElementById("p-" + id);
-  checks.home_panels_show_what_is_seen = body("programs").querySelectorAll(".row").length === 3 && body("ports").textContent.includes("Open to network") && body("ports").textContent.includes("This machine only")
-    && body("connections").textContent.includes("1.2.3.4:443") && body("sources").querySelectorAll(".row").length === 4 && d.getElementById("p-machine").textContent.includes("sees only its own programs");
-  checks.panels_scroll_themselves = ["incidents", "sources", "programs", "ports", "connections"].every(id => body(id).classList.contains("scroll"));
-  {
-    const input = d.querySelector('input[aria-label="Search programs…"]');
-    input.value = "caddy"; input.dispatchEvent(new t.w.Event("input"));
-    const one = body("programs").querySelectorAll(".row").length === 1 && d.querySelector('[data-count="programs"]').textContent === "1 / 3";
-    input.value = "zzz"; input.dispatchEvent(new t.w.Event("input"));
-    checks.panel_search_filters_in_place = one && body("programs").textContent.includes("Nothing matches") && d.contains(input);
-    input.value = ""; input.dispatchEvent(new t.w.Event("input"));
-    const tog = d.querySelector('.c-ports .btn.small'); tog.click();
-    checks.panel_toggle_filters = body("ports").querySelectorAll(".row").length === 1 && tog.getAttribute("aria-pressed") === "true";
-    const sTog = d.querySelector('.c-sources .btn.small'); sTog.click();
-    checks.sources_problems_only = body("sources").querySelectorAll(".row").length === 1 && body("sources").textContent.includes("Kernel");
-  }
+  checks.home_panels_are_summaries = body("ports").querySelectorAll(".row").length === 2 && body("ports").textContent.includes("Open to network") && body("connections").textContent.includes("1.2.3.4:443")
+    && body("sources").querySelectorAll(".row").length === 4 && d.getElementById("p-machine").textContent.includes("sees only its own programs");
+  checks.home_summaries_link_to_their_pages = ["#/incidents", "#/sources", "#/network", "#/live", "#/system"].every(h => !!d.querySelector('a.more[href="' + h + '"]'))
+    && !d.querySelector("#p-ports input.search, .c-ports input.search");
+  checks.home_ports_show_the_exposed_one_first = body("ports").querySelector(".row").classList.contains("exposed");
+  checks.home_tiles_are_links = [...d.querySelectorAll("a.tile")].map(x => x.getAttribute("href")).join(" ") === "#/incidents #/live #/incidents #/sources #/programs #/network";
+  checks.panels_scroll_themselves = ["incidents", "sources", "ports", "connections"].every(id => body(id).classList.contains("scroll"));
   checks.home_has_no_duplicate_counters = d.querySelectorAll(".stat").length === 0 && !text(t.w, ".hero").includes("open alerts");
-  checks.pill_and_nav = text(t.w, "#pill") === "✖ Needs you now" && text(t.w, "#nav-count") === "3" && !d.getElementById("nav-count").hidden && d.querySelectorAll("#nav a").length === 4;
+  checks.pill_and_nav = text(t.w, "#pill") === "✖ Needs you now" && text(t.w, "#nav-count") === "3" && !d.getElementById("nav-count").hidden && d.querySelectorAll("#nav a").length === 7;
   checks.nav_marks_the_page = d.querySelector('#nav a[data-view="home"]').getAttribute("aria-current") === "page" && d.title === "Erinix · Cockpit";
   checks.footer_version = text(t.w, "#version") === "v9.9.9";
   t.close();
@@ -229,6 +221,14 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
   checks.feed_filter_keeps_filtering = rows().length === 1;
   d.querySelector('[data-action="only"]').click();
   checks.feed_filter_off = rows().length === 7;
+  t.live.events.push(mkEvent(8, { kind: "process.exec", label: "Program started", summary: "sleep 1 (user 1000)" }), mkEvent(9, { kind: "net.connect", label: "Outgoing connection", summary: "curl → 1.2.3.4:443" }));
+  await sleep(900);
+  checks.feed_hides_routine_activity_by_default = rows().length === 7 && d.querySelector('[data-action="routine"]').getAttribute("aria-pressed") === "false";
+  d.querySelector('[data-action="routine"]').click();
+  checks.feed_shows_routine_on_request = rows().length === 9 && rows()[0].dataset.id === "9" && d.querySelector('[data-action="routine"]').getAttribute("aria-pressed") === "true";
+  d.querySelector('[data-action="routine"]').click();
+  checks.feed_routine_hidden_again = rows().length === 7;
+  checks.feed_routine_never_hides_an_alert = rows().some(r => r.dataset.id === "3");
   t.live.events.length = 0; t.live.lastId = 0;
   await sleep(900);
   checks.feed_store_cleared = rows().length === 0 && !!d.querySelector(".ev-empty");
@@ -258,20 +258,18 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
 {
   const t = await run({ hash: "#/system", wait: 400 });
   const d = t.doc;
-  checks.system_sources_and_blind_spots = d.querySelectorAll("table tbody tr").length === 4 && text(t.w, "table").includes("Blind") && text(t.w, ".plain").includes("Blind spot: Kernel: need root");
-  checks.system_status = text(t.w, "#app").includes("Live monitoring") && text(t.w, "#app").includes("9.9.9") && text(t.w, "#app").includes("Coming soon");
-  const pals = [...d.querySelectorAll(".pal")];
-  checks.system_theme_picker = pals.length === 3 && pals[0].getAttribute("aria-pressed") === "true" && pals[1].getAttribute("aria-pressed") === "false" && pals[0].querySelectorAll("i").length === 4;
-  checks.system_swatches_use_the_given_colour = pals[0].querySelector("i").style.background !== "";
-  checks.system_auto_leaves_the_system_in_charge = !d.documentElement.hasAttribute("data-theme");
-  pals[2].click();
+  checks.system_status = text(t.w, "#app").includes("Live monitoring") && text(t.w, "#app").includes("9.9.9") && text(t.w, "#app").includes("Coming soon") && text(t.w, "#sys-machine").includes("aarch64");
+  checks.system_has_no_theme_cards = d.querySelectorAll(".pal").length === 0;
+  const btn = d.getElementById("theme-toggle");
+  checks.theme_button_starts_with_the_system = !d.documentElement.hasAttribute("data-theme") && btn.getAttribute("aria-label") === "Switch to dark theme" && btn.querySelector("use").getAttribute("href").endsWith("#i-moon");
+  btn.click();
   await sleep(1300);
   const post = t.calls.find(c => c.path === "/api/settings");
-  checks.system_theme_request = !!post && post.method === "POST" && post.body === '{"theme":"dark"}' && post.headers["X-Erinix-CSRF"] === "tok";
-  checks.system_theme_applies_at_once = d.documentElement.getAttribute("data-theme") === "dark";
-  [...d.querySelectorAll(".pal")][0].click();
+  checks.theme_button_request = !!post && post.method === "POST" && post.body === '{"theme":"dark"}' && post.headers["X-Erinix-CSRF"] === "tok";
+  checks.theme_button_applies_at_once = d.documentElement.getAttribute("data-theme") === "dark" && btn.getAttribute("aria-label") === "Switch to light theme" && btn.querySelector("use").getAttribute("href").endsWith("#i-sun");
+  btn.click();
   await sleep(1300);
-  checks.system_auto_again_removes_the_forced_theme = !d.documentElement.hasAttribute("data-theme");
+  checks.theme_button_flips_back = d.documentElement.getAttribute("data-theme") === "light" && btn.querySelector("use").getAttribute("href").endsWith("#i-moon");
   t.close();
 
   const o = await run({ hash: "#/", data: { overview: overview({ theme: "dark" }) }, wait: 400 });
@@ -281,10 +279,36 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
   checks.unknown_theme_is_ignored = o.doc.documentElement.getAttribute("data-theme") === "dark";
   o.close();
 
-  const evil = overview({ themes: [{ name: "auto", label: "<b>L</b>", blurb: "<i>b</i>", swatch: ["red; background:url(http://evil/x)", "#e8a66a", "not a colour", "#a9c98a"] }] });
-  const e = await run({ hash: "#/system", data: { overview: evil }, wait: 400 });
-  const dots = [...e.doc.querySelectorAll(".pal i")];
-  checks.theme_swatches_are_checked = dots.length === 4 && dots[0].style.background === "" && dots[2].style.background === "" && dots[1].style.background !== "" && e.doc.querySelectorAll(".pal b, .pal i b").length === 0;
+}
+
+// ------------------------------------------------------------ full pages with tables
+{
+  const t = await run({ hash: "#/programs", wait: 400 });
+  const d = t.doc, rows = () => d.querySelectorAll("#p-programs .trow:not(.thead)");
+  checks.programs_page_is_a_table = rows().length === 3 && d.querySelectorAll("#p-programs .thead span").length === 4 && d.querySelector("#p-programs .table").getAttribute("role") === "table";
+  checks.programs_page_is_marked_in_the_menu = d.querySelector('#nav a[data-view="programs"]').getAttribute("aria-current") === "page" && d.title === "Erinix · Programs";
+  const input = d.querySelector('input[aria-label="Search programs…"]');
+  input.value = "caddy"; input.dispatchEvent(new t.w.Event("input"));
+  const one = rows().length === 1 && d.querySelector('[data-count="programs"]').textContent === "1 / 3";
+  input.value = "root sshd"; input.dispatchEvent(new t.w.Event("input"));
+  const words = rows().length === 1;
+  input.value = "zzz"; input.dispatchEvent(new t.w.Event("input"));
+  checks.programs_search_filters_in_place = one && words && d.querySelector("#p-programs").textContent.includes("Nothing matches") && d.contains(input);
+  t.close();
+  const n = await run({ hash: "#/network", wait: 400 });
+  const nd = n.doc;
+  checks.network_page_has_both_tables = nd.querySelectorAll("#p-ports .trow:not(.thead)").length === 2 && nd.querySelectorAll("#p-connections .trow:not(.thead)").length === 1 && nd.querySelectorAll("#p-ports .trow.flagged").length === 1;
+  const tog = nd.querySelector('#p-ports').parentElement.querySelector(".btn.small"); tog.click();
+  checks.network_toggle_filters = nd.querySelectorAll("#p-ports .trow:not(.thead)").length === 1 && tog.getAttribute("aria-pressed") === "true";
+  n.close();
+  const s = await run({ hash: "#/sources", wait: 400 });
+  const sd = s.doc, stog = sd.querySelector("#p-sources").parentElement.querySelector(".btn.small");
+  checks.sources_page_lists_everything = sd.querySelectorAll("#p-sources .trow:not(.thead)").length === 4 && text(s.w, "#app").includes("Kernel: need root");
+  stog.click();
+  checks.sources_problems_only = sd.querySelectorAll("#p-sources .trow:not(.thead)").length === 1 && sd.querySelector("#p-sources").textContent.includes("Kernel");
+  s.close();
+  const e = await run({ hash: "#/programs", data: { inventory: { ...INVENTORY, processes: [{ pid: 1, ppid: 0, uid: 0, name: "<img src=x onerror=1>", command: "<script>x</script>" }] } }, wait: 400 });
+  checks.tables_show_hostile_text_as_text = e.doc.querySelectorAll("#p-programs img, #p-programs script").length === 0 && e.doc.querySelector("#p-programs").textContent.includes("<script>x</script>");
   e.close();
 }
 
