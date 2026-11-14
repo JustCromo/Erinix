@@ -313,14 +313,14 @@ def _exit_on_signal(signum: int, _frame: object) -> None:
 
 
 @contextmanager
-def fullscreen(out: TextIO) -> Iterator[None]:
+def fullscreen(out: TextIO, *, mouse: bool = True) -> Iterator[None]:
     """Alternate screen, mouse and protected paste; always restored on exit."""
     previous: dict[int, object] = {}
     try:
         for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
             previous[signum] = signal.getsignal(signum)
             signal.signal(signum, _exit_on_signal)
-        out.write(ALT_ON + MOUSE_ON + PASTE_ON + ESC + "[2J" + ESC + "[H")
+        out.write(ALT_ON + (MOUSE_ON if mouse else "") + PASTE_ON + ESC + "[2J" + ESC + "[H")
         out.flush()
         yield
     finally:

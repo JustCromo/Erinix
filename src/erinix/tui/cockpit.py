@@ -350,7 +350,7 @@ class Cockpit:
         elif tok == "x":
             self.close_incident()
         elif tok == "w":
-            self.run_command("ui --no-browser")
+            self.open_web()
         elif tok == "R":
             self.elevate()
         elif tok == "\x1b":
@@ -486,6 +486,14 @@ class Cockpit:
         self.show(text, lines)
         self.refresh(True)
 
+    def open_web(self) -> None:
+        """Open the dashboard in the browser; the link is also shown and copied, in case no browser opens."""
+        self.run_command("ui")
+        url = next((w for line in self.overlay for w in line.split() if w.startswith("http://127.0.0.1:")), "")
+        if url and self.out is not None and term.copy_to_clipboard(self.out, url):
+            self.overlay.append("")
+            self.overlay.append("The link is also copied: paste it into a browser if none opened.")
+
     def elevate(self) -> None:
         if self.elevate_fn is None:
             self.flash = "already seeing everything" if getattr(self.runtime, "mode", "") == "full" else "this cannot be done here"
@@ -505,7 +513,7 @@ class Cockpit:
         stack = contextlib.ExitStack()
         self._stack, self._fd = stack, fd
         stack.enter_context(term.raw_input_mode(fd))
-        stack.enter_context(term.fullscreen(self.out))
+        stack.enter_context(term.fullscreen(self.out, mouse=False))
         try:
             self.out.write("\x1b[?25l")
             self.draw()
@@ -543,6 +551,6 @@ class Cockpit:
         finally:
             self._stack = contextlib.ExitStack()
             self._stack.enter_context(term.raw_input_mode(self._fd))
-            self._stack.enter_context(term.fullscreen(self.out))
+            self._stack.enter_context(term.fullscreen(self.out, mouse=False))
             self.out.write("\x1b[?25l")
             self.draw()
