@@ -41,6 +41,7 @@ def test_every_variant_is_readable(variant):
             assert P.contrast(c[sev], c[surface]) >= 4, (variant, surface, sev, round(P.contrast(c[sev], c[surface]), 2))
     assert P.contrast(c["on_primary"], c["primary"]) >= 4.5                      # the label of a button
     assert P.contrast(c["on_critical"], c["critical"]) >= 4.5                    # the solid "critical" badge
+    assert P.contrast(c["on_critical"], c["high"]) >= 4.5                        # the solid "high" badge
     assert P.contrast(c["border"], c["bg"]) >= 1.1                               # borders are thin but visible
 
 
