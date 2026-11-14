@@ -5,25 +5,42 @@ import fs from "fs";
 const require = createRequire(import.meta.url);
 const { JSDOM } = require("jsdom");
 const dir = process.argv[2];
-const html = fs.readFileSync(dir + "/index.html", "utf8").replace(/<script[^>]*><\/script>/, "").replace(/<link rel="stylesheet"[^>]*>/, "");
+const html = fs.readFileSync(dir + "/index.html", "utf8").replace(/<script[^>]*><\/script>/, "").replace(/<link rel="stylesheet"[^>]*>/g, "");
 const script = fs.readFileSync(dir + "/app.js", "utf8");
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const now = () => Date.now() / 1000;
 
-const alert = (over = {}) => ({
-  id: "a".repeat(32), headline: "Someone is guessing SSH passwords from 203.0.113.50", why: "Many failed logins.", next_steps: ["Change the password"],
-  severity: "high", status: "open", first_seen: Date.now() / 1000 - 600, updated: Date.now() / 1000 - 60, remote: "203.0.113.50",
-  progress: { done: 2, total: 3, complete: false },
-  technical: { rule: "ssh-bruteforce-success", kind: "chain", description: "d", response: "report_only", step: "s", mitre: ["T1110.001"], anchor_pid: null, revision: 2, evidence: [["s", ["e1"]]], detail: "" }, ...over });
-const overview = (over = {}) => ({
-  state: "attention", headline: "1 thing needs attention", demo: false, mode: "live", since: Date.now() / 1000 - 3600, heartbeat_age: 1,
-  open: { total: 1, low: 0, medium: 0, high: 1, critical: 0 }, dismissed: 0, attention: [alert()], events_24h: 1234, alerts_24h: 3,
-  activity: Array.from({ length: 48 }, (_, i) => ({ t: i * 1800, events: 10 + (i % 7), alerts: i === 40 ? 1 : 0 })),
-  sources: [{ name: "SSH logins", state: "ok" }, { name: "Caddy log", state: "missing", detail: "not set up" }],
-  blind_spots: ["Caddy log: not set up"], version: "9.9.9", ...over });
+// ------------------------------------------------------------------ fixtures
+const alertObj = (over = {}) => ({
+  id: "a".repeat(32), tag: "SQL injection", area: "website", headline: "Someone tried to attack the database from 192.168.50.31", why: "Database commands in a request.",
+  next_steps: ["Check the logs"], severity: "high", status: "open", first_seen: now() - 600, updated: now() - 60, remote: "192.168.50.31", progress: null,
+  technical: { rule: "web-sqli-attempt", kind: "indicator", description: "d", response: "report_only", step: "s", mitre: ["T1190"], anchor_pid: null, revision: 1, evidence: [["s", ["e1"]]], detail: "" },
+  steps: [], timeline: [], ...over });
+const incident = (over = {}) => ({
+  id: "iabc123def4", who: "192.168.50.31", local: false, severity: "high", status: "open", headline: "Someone at 192.168.50.31 tried 2 different attacks on your website",
+  summary: "Most serious: Someone tried to attack the database. Database commands in a request.", tags: ["SQL injection", "Scanning"], area: "website",
+  alert_count: 2, open_alerts: 2, first_seen: now() - 600, updated: now() - 60, ...over });
+const detailOf = (inc, over = {}) => ({ ...inc, alerts: [alertObj()], timeline: [
+    { id: 1, time: now() - 100, label: "Web request", summary: "GET /admin → 404", remote: "192.168.50.31", step: "s", severity: "low", tag: "Scanning", alert: "a".repeat(32), attack: "x" },
+    { id: 2, time: now() - 50, label: "Web request", summary: "GET /p?id=1 UNION SELECT → 200", remote: "192.168.50.31", step: "s", severity: "high", tag: "SQL injection", alert: "a".repeat(32), attack: "x" }],
+  next_steps: ["Check the web app logs", "Consider blocking 192.168.50.31"], ...over });
+const PALETTES = ["cacao", "miele", "prugna", "nebbia", "autunno", "bosco", "latte"].map(n => ({ name: n, label: n.toUpperCase(), blurb: "About " + n, dark: n !== "latte", swatch: ["#101010", "#e8a66a", "#a9c98a", "#d9b48b"] }));
+const SOURCES = [{ name: "SSH logins", state: "ok" }, { name: "Web log", state: "ok" }, { name: "Programs", state: "ok" }, { name: "Kernel", state: "blind", detail: "need root" }];
+const overview = (over = {}) => {
+  const { top: given, ...rest } = over;
+  const top = given || [incident(), incident({ id: "iccc", who: "203.0.113.50", severity: "critical", tags: ["Password guessing"], headline: "Someone is guessing SSH passwords from 203.0.113.50" }), incident({ id: "iddd", who: "This machine", local: true, tags: ["Remote control"], headline: "A web program started a command line" })];
+  return { state: "critical", headline: "x", demo: false, mode: "live", since: now() - 3600, heartbeat_age: 1, open: { total: top.length, low: 0, medium: 0, high: top.length, critical: 0 },
+    dismissed: 0, attention: [], events_24h: 1234, alerts_24h: 3, activity: Array.from({ length: 48 }, (_, i) => ({ t: i * 1800, events: 10 + (i % 7), alerts: i === 40 ? 1 : 0 })),
+    sources: SOURCES, blind_spots: ["Kernel: need root"], version: "9.9.9", incidents: { open: top.length, top }, palette: "cacao", palettes: PALETTES, ...rest };
+};
+const mkEvent = (id, o = {}) => ({ id, time: now() - 10 + id / 100, kind: "web.request", label: "Web request", summary: "GET /p" + id + " → 200", remote: "10.0.0.1", alert: null, step: null, severity: null, tag: "", incident: null, ...o });
 
-async function run({ hash = "#/", data = {}, status = 200, reject = false, needsLogin = false, login = "ok", preSignedIn = false, wait = 150 } = {}) {
+async function run({ hash = "#/", data = {}, status = 200, reject = false, needsLogin = false, login = "ok", preSignedIn = false, wait = 250 } = {}) {
   const dom = new JSDOM(html, { url: "http://127.0.0.1:8421/" + hash, runScripts: "outside-only", pretendToBeVisual: true });
   const w = dom.window, calls = [];
-  const live = { overview: overview(), alerts: [alert()], ...data };
+  const inc1 = incident();
+  const live = { overview: overview(), incidents: [inc1, incident({ id: "iccc", who: "203.0.113.50", severity: "critical", tags: ["Password guessing"] })], details: {}, ...data };
+  live.details = { [inc1.id]: detailOf(inc1), ...(data.details || {}) };
   let signedIn = !needsLogin || preSignedIn;
   w.fetch = async (path, opts = {}) => {
     calls.push({ path, method: opts.method || "GET", headers: opts.headers || {}, body: opts.body });
@@ -41,225 +58,266 @@ async function run({ hash = "#/", data = {}, status = 200, reject = false, needs
       const list = q.has("after") ? all.filter(e => e.id > Number(q.get("after"))).slice(0, limit) : all.slice(-limit);
       return ok({ events: list, last_id: live.lastId !== undefined ? live.lastId : (all.length ? all[all.length - 1].id : 0) });
     }
-    if (path.startsWith("/api/alerts/") && path.endsWith("/status")) return ok({ ok: true });
-    if (path.startsWith("/api/alerts")) return ok({ alerts: live.alerts });
+    if (path.startsWith("/api/incidents/") && path.endsWith("/status")) return ok({ ok: true, changed: 1 });
+    if (path.startsWith("/api/incidents/")) { const d = live.details[decodeURIComponent(path.slice(15))]; return d ? ok(d) : ok({ error: "Not Found" }, 404); }
+    if (path.startsWith("/api/incidents")) {
+      const st = new URL(path, "http://x").searchParams.get("status") || "open";
+      return ok({ incidents: live.incidents.filter(i => st === "all" || (st === "open" ? i.status === "open" : i.status === "closed")) });
+    }
+    if (path === "/api/settings") { live.palettePosted = JSON.parse(opts.body).palette; live.overview = { ...live.overview, palette: live.palettePosted }; return ok({ ok: true }); }   // the server remembers it
     return ok({}, 404);
   };
   w.eval(script);
-  await new Promise(r => setTimeout(r, wait));
-  return { w, calls, live, close: () => w.close() };
+  await sleep(wait);
+  return { w, doc: w.document, calls, live, close: () => w.close() };
 }
 const checks = {};
 const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || "";
 
-{ // overview renders plain-language state
+// ------------------------------------------------------------------- HOME
+{
   const t = await run();
-  checks.overview_headline = text(t.w, ".hero h1") === "1 thing needs attention";
-  checks.pill_text = text(t.w, "#pill") === "▲ 1 needs attention";
-  checks.nav_count = text(t.w, "#nav-count") === "1" && !t.w.document.getElementById("nav-count").hidden;
-  checks.attention_card = text(t.w, ".alert h3").includes("203.0.113.50") && text(t.w, ".next li") === "Change the password";
+  const d = t.doc, rows = [...d.querySelectorAll(".inc")];
+  checks.home_hero_says_the_top_incident = text(t.w, ".hero h1") === "Someone at 192.168.50.31 tried 2 different attacks on your website" && text(t.w, ".hero .eyebrow") === "Needs you now" && text(t.w, ".hero .lead").startsWith("Most serious");
+  checks.home_lists_three_incidents = rows.length === 3 && rows[0].querySelector(".inc-who").textContent === "192.168.50.31" && rows[0].textContent.includes("SQL injection") && rows[0].textContent.includes("See what happened →");
+  checks.home_links_open_the_incident = rows[0].getAttribute("href") === "#/incidents/iabc123def4" && d.querySelector(".hero .btn.primary").getAttribute("href") === "#/incidents/iabc123def4";
+  checks.home_facts = text(t.w, ".facts").includes("Watching 3 of 4 sources") && text(t.w, ".facts").includes("events checked today") && !!d.querySelector('.facts a[href="#/system"]');
+  checks.home_has_a_small_live_feed = !!d.querySelector("#feed") && d.querySelector("#feed").getAttribute("data-limit") === "6" && !!d.querySelector('.feed-card a[href="#/live"]');
+  checks.home_has_no_duplicate_counters = d.querySelectorAll(".stat").length === 0 && !text(t.w, ".hero").includes("open alerts");
+  checks.pill_and_nav = text(t.w, "#pill") === "✖ Needs you now" && text(t.w, "#nav-count") === "3" && !d.getElementById("nav-count").hidden && d.querySelectorAll("#nav a").length === 4;
+  checks.nav_marks_the_page = d.querySelector('#nav a[data-view="home"]').getAttribute("aria-current") === "page" && d.title === "Erinix · Home";
   checks.footer_version = text(t.w, "#version") === "v9.9.9";
-  checks.sources_listed = text(t.w, "ul.plain").includes("SSH logins") && text(t.w, "ul.plain").includes("not set up");
-  checks.sparkline = t.w.document.querySelectorAll("svg.spark polyline").length === 1 && t.w.document.querySelectorAll("svg.spark circle").length === 1;
-  checks.demo_banner_hidden = t.w.document.getElementById("banner").hidden === true;
   t.close();
-}
-{ // demo banner and states
-  const t = await run({ data: { overview: overview({ demo: true, state: "critical", headline: "Needs your attention now" }) } });
-  checks.demo_banner = !t.w.document.getElementById("banner").hidden && text(t.w, "#banner").includes("demo data");
-  checks.critical_pill = text(t.w, "#pill") === "✖ Critical" && t.w.document.getElementById("pill").className.includes("state-critical");
-  t.close();
-  const s = await run({ data: { overview: overview({ state: "stopped", headline: "Erinix is not running", open: { total: 0, low: 0, medium: 0, high: 0, critical: 0 }, attention: [] }) } });
-  checks.stopped_pill = text(s.w, "#pill") === "■ Not running" && text(s.w, ".empty").includes("Nothing needs your attention");
+  const q = await run({ data: { overview: overview({ state: "protected", top: [] }) } });
+  checks.home_quiet = text(q.w, ".hero h1") === "Everything looks fine" && text(q.w, "#pill") === "✔ All quiet" && !q.doc.querySelector(".hero .btn.primary") && text(q.w, ".card .empty").includes("Nothing needs your attention") && q.doc.getElementById("nav-count").hidden;
+  q.close();
+  const s = await run({ data: { overview: overview({ state: "stopped", top: [], sources: [] }) } });
+  checks.home_stopped = text(s.w, ".hero h1") === "Erinix is not watching" && text(s.w, "#pill") === "■ Not running";
   s.close();
+  const a = await run({ data: { overview: overview({ state: "attention", demo: true }) } });
+  checks.pill_attention_and_demo_banner = text(a.w, "#pill") === "▲ Worth a look" && !a.doc.getElementById("banner").hidden && text(a.w, "#banner").includes("demo data");
+  a.close();
 }
-{ // hostile text is shown as text, never as markup
+
+// -------------------------------------------------------------- INCIDENTS
+{
+  const t = await run({ hash: "#/incidents", wait: 500 });
+  const d = t.doc;
+  checks.incidents_list_and_detail = d.querySelectorAll(".list-pane .inc").length === 2 && d.querySelector(".list-pane .inc").className.includes("selected") && !!d.querySelector(".detail") && t.calls.some(c => c.path === "/api/incidents/iabc123def4");
+  checks.incidents_detail_content = text(t.w, ".d-who") === "192.168.50.31" && text(t.w, ".d-why").startsWith("Most serious") && d.querySelectorAll(".todo li").length === 2 && d.querySelectorAll(".story li").length === 2 && d.querySelectorAll(".attack").length === 1;
+  checks.incidents_story_tags_events = text(t.w, ".story li:first-child").includes("Scanning") && text(t.w, ".story li:first-child").includes("GET /admin → 404");
+  checks.incidents_tabs_and_chips = d.querySelectorAll(".tabs button").length === 3 && [...d.querySelectorAll(".chips button")].map(b => b.textContent).join("|") === "All types|Password guessing 1|Scanning 1|SQL injection 1";
+  d.querySelectorAll(".chips button")[3].click();
+  await sleep(50);
+  checks.incidents_chip_filters = d.querySelectorAll(".list-pane .inc").length === 1 && d.querySelectorAll(".chips button[aria-pressed='true']").length === 1;
+  d.querySelectorAll(".chips button")[0].click();
+  await sleep(50);
+  checks.incidents_chip_clears = d.querySelectorAll(".list-pane .inc").length === 2;
+  d.querySelectorAll(".tabs button")[1].click();
+  await sleep(1300);
+  checks.incidents_closed_tab_asks_the_server = t.calls.some(c => c.path === "/api/incidents?status=closed") && text(t.w, ".list-pane .empty") === "No incidents here.";
+  t.close();
+
+  const c = await run({ hash: "#/incidents/iabc123def4", wait: 500 });
+  checks.incident_route_has_back_link = c.doc.querySelector(".split").className.includes("has-detail") && c.doc.querySelector(".back").getAttribute("href") === "#/incidents";
+  c.doc.querySelector('[data-action="incident-status"]').click();
+  await sleep(100);
+  const post = c.calls.find(x => x.method === "POST");
+  checks.incident_close_request = !!post && post.path === "/api/incidents/iabc123def4/status" && post.headers["X-Erinix-CSRF"] === "tok" && post.body === '{"status":"closed"}';
+  c.close();
+
+  const r = await run({ hash: "#/incidents/iabc123def4", data: { details: { iabc123def4: detailOf(incident({ status: "closed" })) }, incidents: [incident({ status: "closed" })] }, wait: 500 });
+  checks.incident_reopen_button = text(r.w, '[data-action="incident-status"]') === "Reopen";
+  r.close();
+
+  const gone = await run({ hash: "#/incidents/inope", wait: 500 });
+  checks.incident_not_available = text(gone.w, ".detail-pane .empty") === "This incident is not available any more.";
+  gone.close();
+
+  const open = await run({ hash: "#/incidents", wait: 500 });
+  const det = open.doc.querySelector("details.more");
+  det.open = true; det.dispatchEvent(new open.w.Event("toggle"));
+  open.live.details.iabc123def4 = detailOf(incident(), { next_steps: ["Check the web app logs", "A new piece of advice"] });
+  await sleep(1400);
+  checks.incident_details_stay_open_while_it_updates = open.doc.querySelectorAll(".todo li").length === 2 && text(open.w, ".todo li:last-child") === "A new piece of advice" && open.doc.querySelector("details.more").open === true;
+  open.close();
+}
+{ // steps of an attack in progress
+  const steps = [
+    { index: 1, label: "A web program starts a command line", state: "done", time: now() - 2, detail: "bash (user 33)", count: 1 },
+    { index: 2, label: "The command line connects <b>out</b>", state: "current", time: null, detail: "", count: 0 },
+    { index: 3, label: "It gains full control (root)", state: "pending", time: null, detail: "", count: 0 }];
+  const inc = incident();
+  const t = await run({ hash: "#/incidents", data: { details: { [inc.id]: detailOf(inc, { alerts: [alertObj({ steps, progress: { done: 1, total: 3, complete: false }, technical: { ...alertObj().technical, kind: "chain" } })] }) } }, wait: 500 });
+  checks.steps_states = t.doc.querySelectorAll(".tl.done").length === 1 && t.doc.querySelectorAll(".tl.current").length === 1 && t.doc.querySelectorAll(".tl.pending").length === 1;
+  checks.steps_content = text(t.w, ".tl.done .tl-label") === "A web program starts a command line" && text(t.w, ".tl.done .tl-detail") === "bash (user 33)" && text(t.w, ".tl.current .tl-wait") === "waiting…" && /\d\d:\d\d:\d\d/.test(text(t.w, ".tl.done time"));
+  checks.steps_fresh_marked = t.doc.querySelector(".tl.done").className.includes("fresh") && !t.doc.querySelector(".tl.pending").className.includes("fresh");
+  checks.steps_hostile_label = text(t.w, ".tl.current .tl-label") === "The command line connects <b>out</b>" && t.doc.querySelectorAll(".timeline b").length === 0;
+  checks.story_shows_the_possible_next_step = text(t.w, ".story .waiting").includes("Possible next step: The command line connects <b>out</b>");
+  t.close();
+  const many = alertObj({ steps: [{ index: 1, label: "Many failed logins", state: "done", time: now() - 60, detail: "POST /login → 401", count: 8 }] });
+  const c = await run({ hash: "#/incidents", data: { details: { [inc.id]: detailOf(inc, { alerts: [many] }) } }, wait: 500 });
+  checks.steps_count_repeats = text(c.w, ".tl-detail") === "8 times · last: POST /login → 401";
+  c.close();
+}
+{ // hostile text everywhere
   const evil = '<img src=x onerror="window.__pwned=1">';
-  const bad = alert({ headline: evil, why: "</script><script>window.__pwned=1</script>", next_steps: ["<b>bold</b>"], remote: "<i>x</i>", severity: '"><script>window.__pwned=1</script>',
-    technical: { ...alert().technical, rule: "<svg onload=window.__pwned=1>", detail: "<iframe src=//evil>" } });
-  for (const hash of ["#/", "#/alerts"]) {
-    const t = await run({ hash, data: { overview: overview({ attention: [bad] }), alerts: [bad] } });
-    const doc = t.w.document;
-    doc.querySelectorAll("details.more").forEach(d => { d.open = true; });
+  const inc = incident({ who: evil, headline: evil, summary: "</script><script>window.__pwned=1</script>", tags: [evil, "<b>x</b>"], severity: '"><script>x</script>' });
+  const alert = alertObj({ headline: evil, tag: evil, why: evil, next_steps: [evil], remote: "<i>x</i>", severity: '"><x>', technical: { ...alertObj().technical, rule: "<svg onload=window.__pwned=1>", detail: "<iframe src=//evil>" } });
+  const det = detailOf(inc, { alerts: [alert], next_steps: ["<b>bold</b>"], timeline: [{ id: 1, time: now(), label: evil, summary: evil, remote: evil, step: "s", severity: "high", tag: evil, alert: "a" }] });
+  for (const hash of ["#/", "#/incidents"]) {
+    const t = await run({ hash, data: { overview: overview({ top: [inc] }), incidents: [inc], details: { [inc.id]: det } }, wait: 500 });
+    const d = t.doc;
+    d.querySelectorAll("details.more").forEach(x => { x.open = true; });
+    const imgs = [...d.querySelectorAll("img")];
     checks["hostile_no_execution" + hash] = t.w.__pwned === undefined;
-    const imgs = [...doc.querySelectorAll("img")];
-    checks["hostile_only_our_own_images" + hash] = imgs.length <= 2 && imgs.every(i => i.getAttribute("src").startsWith("/static/")) && doc.querySelectorAll("iframe, svg[onload], b").length === 0;
-    checks["hostile_shown_as_text" + hash] = text(t.w, ".alert h3") === evil && text(t.w, ".next li") === "<b>bold</b>";
-    checks["hostile_severity_falls_back" + hash] = doc.querySelector(".badge").className === "badge sev-low" && !doc.querySelector(".alert").className.includes("<");
-    checks["hostile_no_scripts_added" + hash] = doc.scripts.length === 0;
+    checks["hostile_only_our_own_images" + hash] = imgs.every(i => i.getAttribute("src").startsWith("/static/")) && d.querySelectorAll("iframe, svg[onload], b, i, script").length === 0;
+    checks["hostile_shown_as_text" + hash] = text(t.w, ".inc-title").includes(evil) && text(t.w, ".inc-who") === evil;
+    checks["hostile_severity_falls_back" + hash] = d.querySelector(".inc").className.includes("sev-low") && !d.querySelector(".inc").className.includes("<");
+    checks["hostile_no_scripts_added" + hash] = d.scripts.length === 0;
     t.close();
   }
 }
-{ // signed out
+
+// ------------------------------------------------------------------- LIVE
+{
+  const events = [mkEvent(1), mkEvent(2), mkEvent(3, { alert: "a".repeat(32), step: "s", severity: "high", label: "Program started", summary: "bash (user 33)", tag: "Remote control", incident: "iabc123def4" })];
+  const t = await run({ hash: "#/live", data: { events }, wait: 900 });
+  const d = t.doc, rows = () => [...d.querySelectorAll("#feed li.ev")];
+  checks.feed_initial = rows().length === 3 && rows()[0].dataset.id === "3" && rows()[2].dataset.id === "1";
+  checks.feed_flagged_row = rows()[0].className.includes("flagged") && rows()[0].className.includes("sev-high") && !rows()[1].className.includes("flagged");
+  checks.feed_flagged_row_links_to_its_incident = rows()[0].querySelector("a.tag").textContent === "Remote control" && rows()[0].querySelector("a.tag").getAttribute("href") === "#/incidents/iabc123def4";
+  checks.live_active_strip = d.querySelectorAll(".now-chip").length === 2 && text(t.w, ".now-strip").includes("Active now") && text(t.w, ".now-chip").includes("192.168.50.31");
+  const firstNode = rows()[0], card = d.querySelector(".now-chip");
+  t.live.events.push(mkEvent(4), mkEvent(5));
+  await sleep(900);
+  checks.feed_appends = rows().length === 5 && rows()[0].dataset.id === "5" && rows().includes(firstNode);
+  checks.feed_requests_only_newer = t.calls.some(c => c.path.startsWith("/api/events?after=3"));
+  checks.feed_no_redraw = d.querySelector(".now-chip") === card;
+  d.querySelector('[data-action="pause"]').click();
+  t.live.events.push(mkEvent(6));
+  await sleep(900);
+  checks.feed_pause_holds = rows().length === 5 && d.querySelector('[data-action="pause"]').textContent === "Resume (1 new)";
+  d.querySelector('[data-action="pause"]').click();
+  checks.feed_resume_shows = rows().length === 6 && rows()[0].dataset.id === "6" && d.querySelector('[data-action="pause"]').textContent === "Pause";
+  d.querySelector('[data-action="only"]').click();
+  checks.feed_only_suspicious = rows().length === 1 && rows()[0].dataset.id === "3" && d.querySelector('[data-action="only"]').getAttribute("aria-pressed") === "true";
+  t.live.events.push(mkEvent(7));
+  await sleep(900);
+  checks.feed_filter_keeps_filtering = rows().length === 1;
+  d.querySelector('[data-action="only"]').click();
+  checks.feed_filter_off = rows().length === 7;
+  t.live.events.length = 0; t.live.lastId = 0;
+  await sleep(900);
+  checks.feed_store_cleared = rows().length === 0 && !!d.querySelector(".ev-empty");
+  checks.feed_polls_twice_a_second = t.calls.filter(c => c.path.startsWith("/api/events")).length >= 5;
+  t.close();
+
+  const evil = '<img src=x onerror="window.__pwned=1">';
+  const many = Array.from({ length: 400 }, (_, i) => mkEvent(i + 1));
+  many[399] = mkEvent(400, { label: evil, summary: evil, remote: evil, alert: "b".repeat(32), step: evil, severity: '"><script>x</script>', tag: evil, incident: "../../x" });
+  const h = await run({ hash: "#/live", data: { events: many }, wait: 900 });
+  const hd = h.doc, hrows = () => [...hd.querySelectorAll("#feed li.ev")];
+  checks.feed_hostile_is_text = h.w.__pwned === undefined && hrows()[0].textContent.includes(evil) && hd.querySelectorAll("#feed img, #feed script").length === 0;
+  checks.feed_hostile_severity_falls_back = hrows()[0].className === "ev flagged sev-low";
+  checks.feed_unsafe_incident_id_is_not_a_link = !hrows()[0].querySelector("a") && hrows()[0].querySelector(".tag").textContent === evil;
+  checks.feed_first_fill_is_bounded = hrows().length <= 80;
+  for (let i = 401; i <= 700; i++) h.live.events.push(mkEvent(i));
+  await sleep(1700);
+  checks.feed_flood_is_bounded = hrows().length <= 150 && hrows()[0].dataset.id === "700";
+  h.close();
+
+  const quiet = await run({ hash: "#/live", data: { incidents: [incident({ updated: now() - 3600 })] }, wait: 400 });
+  checks.live_quiet = text(quiet.w, ".now-strip").includes("No attack in progress") && quiet.doc.querySelectorAll(".now-chip").length === 0;
+  quiet.close();
+}
+
+// ----------------------------------------------------------------- SYSTEM
+{
+  const t = await run({ hash: "#/system", wait: 400 });
+  const d = t.doc;
+  checks.system_sources_and_blind_spots = d.querySelectorAll("table tbody tr").length === 4 && text(t.w, "table").includes("Blind") && text(t.w, ".plain").includes("Blind spot: Kernel: need root");
+  checks.system_status = text(t.w, "#app").includes("Live monitoring") && text(t.w, "#app").includes("9.9.9") && text(t.w, "#app").includes("Coming soon");
+  const pals = [...d.querySelectorAll(".pal")];
+  checks.system_palette_picker = pals.length === 7 && pals[0].getAttribute("aria-pressed") === "true" && pals[1].getAttribute("aria-pressed") === "false" && pals[0].querySelectorAll("i").length === 4;
+  checks.system_swatches_use_the_given_colour = pals[0].querySelector("i").style.background !== "";
+  pals[3].click();
+  await sleep(1300);
+  const post = t.calls.find(c => c.path === "/api/settings");
+  checks.system_palette_request = !!post && post.method === "POST" && post.body === '{"palette":"nebbia"}' && post.headers["X-Erinix-CSRF"] === "tok";
+  checks.system_palette_applies_at_once = d.documentElement.getAttribute("data-palette") === "nebbia";
+  t.close();
+
+  const o = await run({ hash: "#/", data: { overview: overview({ palette: "prugna" }) }, wait: 400 });
+  checks.palette_from_the_store_is_applied = o.doc.documentElement.getAttribute("data-palette") === "prugna";
+  o.live.overview = overview({ palette: "x'; } body{display:none" });
+  await o.w.__erinix.refresh();
+  checks.unknown_palette_is_ignored = o.doc.documentElement.getAttribute("data-palette") === "prugna";
+  o.close();
+
+  const evil = overview({ palettes: [{ name: "cacao", label: "<b>L</b>", blurb: "<i>b</i>", dark: true, swatch: ["red; background:url(http://evil/x)", "#e8a66a", "not a colour", "#a9c98a"] }] });
+  const e = await run({ hash: "#/system", data: { overview: evil }, wait: 400 });
+  const dots = [...e.doc.querySelectorAll(".pal i")];
+  checks.palette_swatches_are_checked = dots.length === 4 && dots[0].style.background === "" && dots[2].style.background === "" && dots[1].style.background !== "" && e.doc.querySelectorAll(".pal b, .pal i b").length === 0;
+  e.close();
+}
+
+// ------------------------------------------------------------ counters etc.
+{
+  const o = await run({ hash: "#/" });
+  const od = o.doc, row = od.querySelector(".inc"), base = o.live.overview;
+  const same = extra => overview({ top: base.incidents.top, since: base.since, ...extra });
+  o.live.overview = same({ events_24h: 1299, alerts_24h: 9 });
+  await o.w.__erinix.refresh();
+  checks.counters_update_in_place = [...od.querySelectorAll('[data-live="events_24h"]')].length >= 1 && [...od.querySelectorAll('[data-live="events_24h"]')].every(el => /1.?299/.test(el.textContent)) && od.querySelector(".inc") === row;
+  o.live.overview = same({ events_24h: 1299, alerts_24h: 9, activity: Array.from({ length: 48 }, (_, i) => ({ t: i * 1800, events: 50 + i, alerts: 0 })) });
+  await o.w.__erinix.refresh();
+  checks.chart_and_counters_never_redraw_the_page = od.querySelector(".inc") === row;
+  o.live.overview = same({ headline: "x", state: "critical", incidents: { open: 4, top: base.incidents.top } });
+  await o.w.__erinix.refresh();
+  checks.real_changes_still_redraw = od.querySelector(".inc") !== row && text(o.w, "#nav-count") === "4";
+  o.close();
+}
+
+// ------------------------------------------------------- signed out, offline
+{
   const t = await run({ status: 401 });
   checks.locked_screen = text(t.w, ".lock").includes("erinix ui") && text(t.w, "#pill") === "Signed out";
   t.close();
+  const o = await run({ reject: true });
+  checks.offline_message = text(o.w, "#app").includes("Cannot reach Erinix") && text(o.w, "#pill") === "Offline";
+  o.close();
 }
-{ // server unreachable
-  const t = await run({ reject: true });
-  checks.offline_message = text(t.w, "#app").includes("Cannot reach Erinix") && text(t.w, "#pill") === "Offline";
-  t.close();
-}
-{ // alerts view: tabs, dismiss with CSRF, reopen button
-  const t = await run({ hash: "#/alerts" });
-  checks.alerts_tabs = t.w.document.querySelectorAll(".tabs button").length === 3 && t.calls.some(c => c.path === "/api/alerts?status=open&limit=100");
-  t.w.document.querySelector(".actions .btn").click();
-  await new Promise(r => setTimeout(r, 100));
-  const post = t.calls.find(c => c.method === "POST");
-  checks.dismiss_request = !!post && post.path === "/api/alerts/" + "a".repeat(32) + "/status" && post.headers["X-Erinix-CSRF"] === "tok" && post.body === '{"status":"dismissed"}';
-  t.close();
-  const d = await run({ hash: "#/alerts", data: { alerts: [alert({ status: "dismissed" })] } });
-  checks.reopen_button = text(d.w, ".actions .btn") === "Reopen" && d.w.document.querySelector(".alert").className.includes("is-dismissed");
-  d.close();
-}
-{ // "See more" stays open when data refreshes
-  const t = await run({ hash: "#/alerts" });
-  const details = t.w.document.querySelector("details.more");
-  details.open = true;
-  details.dispatchEvent(new t.w.Event("toggle"));
-  t.live.alerts = [alert({ headline: "Changed headline" })];
-  await t.w.__erinix.refresh();
-  checks.refresh_updates = text(t.w, ".alert h3") === "Changed headline";
-  checks.details_stay_open = t.w.document.querySelector("details.more").open === true;
-  t.close();
-}
-{ // sources page
-  const t = await run({ hash: "#/sources" });
-  checks.sources_page = t.w.document.querySelectorAll("table tbody tr").length === 2 && text(t.w, "table").includes("Blind") && text(t.w, "#app").includes("Live monitoring");
-  t.close();
-}
-{ // sign-in: the token rides in the address fragment and is sent once, by the page
+
+// ----------------------------------------------------------------- sign-in
+{
   const token = "T".repeat(43);
   const t = await run({ hash: "#login=" + token, needsLogin: true });
   const logins = t.calls.filter(c => c.path === "/api/login");
   checks.login_sent_once = logins.length === 1 && logins[0].method === "POST" && logins[0].body === JSON.stringify({ token }) && logins[0].headers["Content-Type"] === "application/json";
   checks.login_token_removed_from_address = t.w.location.hash === "" && !t.w.location.href.includes(token);
   checks.login_token_never_in_urls = t.calls.every(c => !c.path.includes(token));
-  checks.login_then_dashboard = text(t.w, ".hero h1") === "1 thing needs attention" && !t.w.document.querySelector(".lock");
+  checks.login_then_dashboard = text(t.w, ".hero h1") !== "" && !t.doc.querySelector(".lock");
   t.close();
-  // a duplicate open: the token is already used, but another copy of the page signed in
   const d = await run({ hash: "#login=" + token, needsLogin: true, login: "invalid", preSignedIn: true, wait: 900 });
-  checks.login_duplicate_open_still_works = text(d.w, ".hero h1") === "1 thing needs attention" && !d.w.document.querySelector(".lock");
+  checks.login_duplicate_open_still_works = !!d.doc.querySelector(".hero") && !d.doc.querySelector(".lock");
   d.close();
   for (const [code, words] of [["invalid", "already used"], ["expired", "expired"], ["unavailable", "could not read"]]) {
     const f = await run({ hash: "#login=" + token, needsLogin: true, login: code, wait: 900 });
-    checks["login_" + code + "_message"] = text(f.w, ".lock .warn").includes(words) && text(f.w, ".lock").includes("erinix ui");
-    checks["login_" + code + "_token_gone"] = f.w.location.hash === "";
+    checks["login_" + code + "_message"] = text(f.w, ".lock .warn").includes(words) && text(f.w, ".lock").includes("erinix ui") && f.w.location.hash === "";
     f.close();
   }
-  // a link pasted into a tab that is already open only changes the "#" part: it must still sign in
   const p = await run({ needsLogin: true });
-  checks.locked_before_paste = !!p.w.document.querySelector(".lock");
+  checks.locked_before_paste = !!p.doc.querySelector(".lock");
   p.w.location.hash = "#login=" + token;
-  await new Promise(r => setTimeout(r, 400));
-  checks.login_by_pasting_into_open_tab = text(p.w, ".hero h1") === "1 thing needs attention" && p.w.location.hash === "" && p.calls.filter(c => c.path === "/api/login").length === 1;
+  await sleep(500);
+  checks.login_by_pasting_into_open_tab = !!p.doc.querySelector(".hero") && p.w.location.hash === "" && p.calls.filter(c => c.path === "/api/login").length === 1;
   p.close();
-  // things that look like a token but are not: never sent
   for (const bad of ["#login=short", "#login=" + "x".repeat(200), "#login=" + "a".repeat(30) + "<b>", "#login="]) {
     const b = await run({ hash: bad, needsLogin: true });
-    checks["login_ignores_" + bad.slice(0, 18)] = b.calls.every(c => c.path !== "/api/login") && !!b.w.document.querySelector(".lock");
+    checks["login_ignores_" + bad.slice(0, 18)] = b.calls.every(c => c.path !== "/api/login") && !!b.doc.querySelector(".lock");
     b.close();
   }
-}
-{ // ---- the live stream: incremental, pausable, filterable, bounded, safe
-  const now = Date.now() / 1000;
-  const mk = (id, o = {}) => ({ id, time: now - 10 + id / 100, kind: "web.request", label: "Web request", summary: "GET /p" + id + " → 200", remote: "10.0.0.1", alert: null, step: null, severity: null, ...o });
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const events = [mk(1), mk(2), mk(3, { alert: "a".repeat(32), step: "s", severity: "high", label: "Program started", summary: "bash (user 33)" })];
-  const t = await run({ hash: "#/live", data: { events }, wait: 900 });
-  const doc = t.w.document, rows = () => [...doc.querySelectorAll("#feed li.ev")];
-  checks.feed_initial = rows().length === 3 && rows()[0].dataset.id === "3" && rows()[2].dataset.id === "1";
-  checks.feed_flagged = rows()[0].className.includes("flagged") && rows()[0].className.includes("sev-high") && rows()[0].textContent.includes("Part of an attack") && !rows()[1].className.includes("flagged");
-  const firstNode = rows()[0], alertNode = doc.querySelector(".alert");
-  t.live.events.push(mk(4), mk(5));
-  await sleep(900);
-  checks.feed_appends = rows().length === 5 && rows()[0].dataset.id === "5" && rows().includes(firstNode);
-  checks.feed_requests_only_newer = t.calls.some(c => c.path.startsWith("/api/events?after=3"));
-  checks.feed_no_redraw = !alertNode || doc.querySelector(".alert") === alertNode;
-  doc.querySelector('[data-action="pause"]').click();
-  t.live.events.push(mk(6));
-  await sleep(900);
-  checks.feed_pause_holds = rows().length === 5 && doc.querySelector('[data-action="pause"]').textContent === "Resume (1 new)";
-  doc.querySelector('[data-action="pause"]').click();
-  checks.feed_resume_shows = rows().length === 6 && rows()[0].dataset.id === "6" && doc.querySelector('[data-action="pause"]').textContent === "Pause";
-  doc.querySelector('[data-action="only"]').click();
-  checks.feed_only_suspicious = rows().length === 1 && rows()[0].dataset.id === "3" && doc.querySelector('[data-action="only"]').getAttribute("aria-pressed") === "true";
-  t.live.events.push(mk(7));
-  await sleep(900);
-  checks.feed_filter_keeps_filtering = rows().length === 1;
-  doc.querySelector('[data-action="only"]').click();
-  checks.feed_filter_off = rows().length === 7;
-  t.live.events.length = 0; t.live.lastId = 0;
-  await sleep(900);
-  checks.feed_store_cleared = rows().length === 0 && !!doc.querySelector(".ev-empty");
-  checks.feed_polls_twice_a_second = t.calls.filter(c => c.path.startsWith("/api/events")).length >= 5;       // about 8 polls in 4.5 s
-  t.close();
-
-  const evil = '<img src=x onerror="window.__pwned=1">';
-  const many = Array.from({ length: 400 }, (_, i) => mk(i + 1));
-  many[399] = mk(400, { label: evil, summary: evil, remote: evil, alert: "b".repeat(32), step: evil, severity: '"><script>x</script>' });
-  const h = await run({ hash: "#/live", data: { events: many }, wait: 900 });
-  const hd = h.w.document, hrows = () => [...hd.querySelectorAll("#feed li.ev")];
-  checks.feed_hostile_is_text = h.w.__pwned === undefined && hrows()[0].textContent.includes(evil) && hd.querySelectorAll("#feed img, #feed script").length === 0;
-  checks.feed_hostile_severity_falls_back = hrows()[0].className === "ev flagged sev-low";
-  checks.feed_first_fill_is_bounded = hrows().length <= 80;
-  for (let i = 401; i <= 700; i++) h.live.events.push(mk(i));
-  await sleep(1700);
-  checks.feed_flood_is_bounded = hrows().length <= 150 && hrows()[0].dataset.id === "700";
-  h.close();
-}
-{ // ---- steps inside an attack
-  const now = Date.now() / 1000;
-  const steps = [
-    { index: 1, label: "A web program starts a command line", state: "done", time: now - 2, detail: "bash (user 33)", count: 1 },
-    { index: 2, label: "The command line connects <b>out</b>", state: "current", time: null, detail: "", count: 0 },
-    { index: 3, label: "It gains full control (root)", state: "pending", time: null, detail: "", count: 0 }];
-  const a = alert({ steps, timeline: [] });
-  const t = await run({ hash: "#/alerts", data: { alerts: [a] } });
-  const doc = t.w.document;
-  checks.steps_states = doc.querySelectorAll(".tl.done").length === 1 && doc.querySelectorAll(".tl.current").length === 1 && doc.querySelectorAll(".tl.pending").length === 1;
-  checks.steps_content = text(t.w, ".tl.done .tl-label") === "A web program starts a command line" && text(t.w, ".tl.done .tl-detail") === "bash (user 33)" && text(t.w, ".tl.current .tl-wait") === "waiting…" && /\d\d:\d\d:\d\d/.test(text(t.w, ".tl.done time"));
-  checks.steps_fresh_marked = doc.querySelector(".tl.done").className.includes("fresh") && !doc.querySelector(".tl.pending").className.includes("fresh");
-  checks.steps_hostile_label = text(t.w, ".tl.current .tl-label") === "The command line connects <b>out</b>" && doc.querySelectorAll(".timeline b").length === 0;
-  t.close();
-  const many = alert({ steps: [{ index: 1, label: "Many failed logins", state: "done", time: now - 60, detail: "POST /login → 401", count: 8 }], timeline: [] });
-  const c = await run({ hash: "#/alerts", data: { alerts: [many] } });
-  checks.steps_counts_repeats = text(c.w, ".tl-detail") === "8 times · last: POST /login → 401";
-  c.close();
-  const single = alert({ steps: [], progress: null, timeline: [{ id: 1, time: now, label: "File access", summary: "write /etc/shadow by vim", remote: null, step: "x", severity: "high" }] });
-  const s = await run({ hash: "#/alerts", data: { alerts: [single] } });
-  checks.timeline_for_single_events = text(s.w, ".tl-title") === "What was seen" && text(s.w, ".tl-detail") === "write /etc/shadow by vim";
-  s.close();
-}
-{ // ---- the live page, the overview and counters that move in place
-  const now = Date.now() / 1000;
-  const recent = alert({ id: "r".repeat(32), updated: now - 30 }), old = alert({ id: "o".repeat(32), updated: now - 3600, headline: "Old one" });
-  const t = await run({ hash: "#/live", data: { alerts: [recent, old] } });
-  const doc = t.w.document;
-  checks.live_page_lists_recent_attacks_only = doc.querySelectorAll("#app .alert").length === 1 && !text(t.w, "#app").includes("Old one");
-  checks.live_cards_are_compact = !!doc.querySelector(".alert.compact") && !doc.querySelector(".alert.compact .next") && !doc.querySelector(".alert.compact .actions");
-  checks.live_nav_link = !!doc.querySelector('#nav a[data-view="live"]') && doc.querySelector('#nav a[data-view="live"]').getAttribute("aria-current") === "page";
-  t.close();
-  const e = await run({ hash: "#/live", data: { alerts: [] } });
-  checks.live_page_when_quiet = text(e.w, "#app").includes("No attack in progress") && !!e.w.document.querySelector("#feed");
-  e.close();
-  const o = await run({ hash: "#/" });
-  const od = o.w.document;
-  checks.overview_cards_are_full = !!od.querySelector(".alert .next li") && !od.querySelector(".alert.compact");
-  checks.overview_has_a_small_live_feed = !!od.querySelector("#feed") && od.querySelector("#feed").getAttribute("data-limit") === "8" && !!od.querySelector('.feed-card a[href="#/live"]');
-  const card = od.querySelector(".alert");
-  const base = o.live.overview;
-  const same = extra => overview({ since: base.since, attention: base.attention, ...extra });       // everything equal except what moves
-  o.live.overview = same({ events_24h: 1299, alerts_24h: 9 });
-  await o.w.__erinix.refresh();
-  checks.counters_update_in_place = [...od.querySelectorAll('[data-live="events_24h"]')].length >= 2 && [...od.querySelectorAll('[data-live="events_24h"]')].every(el => /1.?299/.test(el.textContent)) && od.querySelector(".alert") === card;
-  o.live.overview = same({ events_24h: 1299, alerts_24h: 9, activity: Array.from({ length: 48 }, (_, i) => ({ t: i * 1800, events: 50 + i, alerts: 0 })) });
-  await o.w.__erinix.refresh();
-  checks.chart_updates_in_place = od.querySelector(".alert") === card && od.querySelectorAll("svg.spark circle").length === 0;
-  o.live.overview = same({ headline: "Needs your attention now", state: "critical", open: { total: 2, low: 0, medium: 0, high: 1, critical: 1 } });
-  await o.w.__erinix.refresh();
-  checks.real_changes_still_redraw = text(o.w, ".hero h1") === "Needs your attention now" && od.querySelector(".alert") !== card;
-  o.close();
 }
 console.log(JSON.stringify({ checks }));
 process.exit(0);

@@ -453,3 +453,125 @@ def test_alerts_come_with_their_steps_and_timeline(dash):
     assert detail["steps"] == chain["steps"]
     overview = get_json(dash, "/api/overview", cookie)[1]
     assert overview["attention"][0]["steps"] and "events_24h" in overview
+
+
+# ------------------------------------------------- incidents, settings, palettes
+def seed_attacks(server):
+    from pathlib import Path
+
+    from erinix.demo import live as live_demo
+    from erinix.engine import Correlator
+    from erinix.recorder import Recorder
+    from erinix.rules import load_rules
+
+    with Store(server.db_path) as s:
+        rec = Recorder(s, Correlator(load_rules(Path(__file__).resolve().parents[2] / "rules")))
+        for _, event in live_demo.story():
+            rec.feed(live_demo.stamp(event))
+
+
+def test_palette_stylesheet_is_served_and_complete(dash):
+    from erinix import palettes
+
+    status, h, body = call(dash, "GET", "/static/palettes.css")
+    assert status == 200 and h["content-type"].startswith("text/css") and body.decode() == palettes.css()
+    assert b"@import" not in body and b"url(" not in body
+
+
+def test_overview_carries_incidents_and_the_palette_choice(dash):
+    seed_attacks(dash)
+    cookie, _ = sign_in(dash)
+    o = get_json(dash, "/api/overview", cookie)[1]
+    assert o["incidents"]["open"] >= 4 and len(o["incidents"]["top"]) == 3 and o["palette"] == "cacao" and len(o["palettes"]) == 7
+    assert o["incidents"]["top"][0]["severity"] == "critical" and o["incidents"]["top"][0]["tags"]
+
+
+def test_incidents_api(dash):
+    seed_attacks(dash)
+    assert call(dash, "GET", "/api/incidents")[0] == 401 and call(dash, "GET", "/api/incidents/i123")[0] == 401
+    cookie, _ = sign_in(dash)
+    _, data, _ = get_json(dash, "/api/incidents?status=open", cookie)
+    big = next(i for i in data["incidents"] if i["who"] == "192.168.50.31")
+    assert big["alert_count"] >= 5 and "alerts" not in big                                  # the list is light
+    _, detail, _ = get_json(dash, "/api/incidents/" + big["id"], cookie)
+    assert len(detail["alerts"]) == big["alert_count"] and detail["timeline"] and detail["next_steps"] and detail["alerts"][0]["steps"] is not None
+    assert get_json(dash, "/api/incidents?status=closed", cookie)[1] == {"incidents": []}
+    for bad in ("?status=evil", "?status=OPEN", "?status=closed;x"):
+        assert call(dash, "GET", "/api/incidents" + bad, headers={"Cookie": cookie})[0] == 400
+
+
+@pytest.mark.parametrize("path", ["/api/incidents/inope", "/api/incidents/" + "a" * 500, "/api/incidents/..%2f..%2fetc", "/api/incidents/%27%20OR%201%3D1%20--",
+                                  "/api/incidents/%00", "/api/incidents/"])
+def test_unknown_or_hostile_incident_ids(dash, path):
+    seed_attacks(dash)
+    cookie, _ = sign_in(dash)
+    assert call(dash, "GET", path, headers={"Cookie": cookie})[0] == 404
+    assert len(get_json(dash, "/api/incidents", cookie)[1]["incidents"]) >= 4              # nothing was damaged
+
+
+def test_closing_and_reopening_an_incident_through_the_api(dash):
+    seed_attacks(dash)
+    cookie, csrf = sign_in(dash)
+    big = next(i for i in get_json(dash, "/api/incidents", cookie)[1]["incidents"] if i["who"] == "192.168.50.31")
+    path = f"/api/incidents/{big['id']}/status"
+    status, _, body = post(dash, path, cookie, csrf, {"status": "closed"})
+    assert status == 200 and json.loads(body)["changed"] == big["alert_count"]
+    assert all(i["who"] != "192.168.50.31" for i in get_json(dash, "/api/incidents", cookie)[1]["incidents"])
+    assert get_json(dash, "/api/incidents?status=closed", cookie)[1]["incidents"][0]["who"] == "192.168.50.31"
+    assert post(dash, path, cookie, csrf, {"status": "open"})[0] == 200
+    assert any(i["who"] == "192.168.50.31" for i in get_json(dash, "/api/incidents", cookie)[1]["incidents"])
+    assert post(dash, path, cookie, csrf, {"status": "open"})[0] == 200                      # already open: still fine, changes nothing
+
+
+def test_incident_changes_need_the_same_protections_and_valid_input(dash):
+    seed_attacks(dash)
+    cookie, csrf = sign_in(dash)
+    iid = get_json(dash, "/api/incidents", cookie)[1]["incidents"][0]["id"]
+    path = f"/api/incidents/{iid}/status"
+    assert post(dash, path, "", csrf, {"status": "closed"})[0] == 401
+    assert post(dash, path, cookie, "", {"status": "closed"})[0] == 403
+    assert post(dash, path, cookie, csrf, {"status": "closed"}, Origin="http://evil.example.com")[0] == 403
+    for bad in ({"status": "dismissed"}, {"status": ["closed"]}, {"status": None}, {}, [1], b"nope"):
+        assert post(dash, path, cookie, csrf, bad)[0] == 400
+    assert post(dash, "/api/incidents/inope/status", cookie, csrf, {"status": "closed"})[0] == 404
+    assert post(dash, "/api/incidents/%27%3B%20--/status", cookie, csrf, {"status": "closed"})[0] == 404
+    assert call(dash, "POST", f"/api/incidents/{iid}/status", headers={"Cookie": cookie, "X-Erinix-CSRF": csrf, "Content-Type": "text/plain"}, body=b"x")[0] == 415
+    assert all(i["status"] == "open" for i in get_json(dash, "/api/incidents", cookie)[1]["incidents"])
+
+
+def test_choosing_a_palette(dash):
+    cookie, csrf = sign_in(dash)
+    status, _, _ = post(dash, "/api/settings", cookie, csrf, {"palette": "nebbia"})
+    assert status == 200
+    assert get_json(dash, "/api/overview", cookie)[1]["palette"] == "nebbia"
+    with Store(dash.db_path, readonly=True) as s:
+        assert s.get_meta("palette") == "nebbia"                                            # the console reads the same setting
+
+
+@pytest.mark.parametrize("body", [{"palette": "nope"}, {"palette": "cacao\"; } body { display:none"}, {"palette": ["cacao"]}, {"palette": None},
+                                  {"palette": "cacao", "other": 1}, {"theme": "cacao"}, {}, ["cacao"], "cacao", b"not json", {"palette": "../cacao"},
+                                  {"palette": "CACAO"}, {"palette": "a" * 400}])
+def test_bad_palette_requests_change_nothing(dash, body):
+    cookie, csrf = sign_in(dash)
+    assert post(dash, "/api/settings", cookie, csrf, body)[0] == 400
+    assert get_json(dash, "/api/overview", cookie)[1]["palette"] == "cacao"
+
+
+def test_settings_need_a_session_csrf_and_a_local_origin(dash):
+    cookie, csrf = sign_in(dash)
+    assert post(dash, "/api/settings", "", csrf, {"palette": "latte"})[0] == 401
+    assert post(dash, "/api/settings", cookie, "", {"palette": "latte"})[0] == 403
+    assert post(dash, "/api/settings", cookie, csrf, {"palette": "latte"}, Origin="http://evil.example.com")[0] == 403
+    assert call(dash, "GET", "/api/settings", headers={"Cookie": cookie})[0] == 404
+    assert get_json(dash, "/api/overview", cookie)[1]["palette"] == "cacao"
+
+
+def test_events_know_their_attack_type_and_incident(dash):
+    seed_attacks(dash)
+    cookie, _ = sign_in(dash)
+    incidents = {i["id"] for i in get_json(dash, "/api/incidents?status=all", cookie)[1]["incidents"]}
+    events = get_json(dash, "/api/events?after=0&limit=500", cookie)[1]["events"]
+    flagged = [e for e in events if e["alert"]]
+    assert flagged and all(e["tag"] and e["incident"] in incidents for e in flagged)
+    plain = [e for e in events if not e["alert"]]
+    assert plain and all(e["incident"] is None and e["tag"] == "" for e in plain)

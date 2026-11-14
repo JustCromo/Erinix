@@ -4,10 +4,10 @@
    textContent / createTextNode, NEVER as HTML, because alert text can contain
    what an attacker typed into a URL, a user name or a user agent. */
 (function () {
-  const POLL_MS = 1000;           // overview, alerts: once a second
+  const POLL_MS = 1000;           // overview and incidents: once a second
   const FEED_MS = 500;            // the live stream of events: twice a second
   const FEED_KEEP = 300;
-  const FEED_SHOWN = { overview: 8, live: 150 };
+  const FEED_SHOWN = { home: 6, live: 150 };
   const SEVERITY = {
     low: { label: "Low", icon: "●" },
     medium: { label: "Medium", icon: "▲" },
@@ -15,9 +15,9 @@
     critical: { label: "Critical", icon: "✖" },
   };
   const STATES = {
-    protected: { icon: "✔", label: "Protected" },
-    attention: { icon: "▲", label: "Needs attention" },
-    critical: { icon: "✖", label: "Critical" },
+    protected: { icon: "✔", label: "All quiet" },
+    attention: { icon: "▲", label: "Worth a look" },
+    critical: { icon: "✖", label: "Needs you now" },
     stopped: { icon: "■", label: "Not running" },
   };
   const RESPONSE = {
@@ -25,15 +25,18 @@
     interactive: "Asks you before acting",
     auto: "Acts automatically",
   };
-
   const LOGIN_MESSAGES = {
     invalid: "This sign-in link was already used or is not valid.",
     expired: "This sign-in link has expired.",
     unavailable: "Erinix could not read its data. Try: erinix doctor",
   };
+  const PAGE_NAMES = { home: "Home", incidents: "Incidents", live: "Live", system: "System" };
 
-  const state = { overview: null, alerts: [], filter: "open", csrf: null, version: "", locked: false, error: null, open: {}, lastKey: "", loginError: "", renderedView: "",
-    feed: { events: [], lastId: 0, paused: false, pausedAt: null, queued: 0, only: false, loaded: false } };
+  const state = {
+    overview: null, incidents: [], detail: null, selected: null, filter: "open", tag: null,
+    csrf: null, version: "", locked: false, error: null, open: {}, lastKey: "", loginError: "", renderedView: "",
+    feed: { events: [], lastId: 0, paused: false, pausedAt: null, queued: 0, only: false, loaded: false },
+  };
   const app = document.getElementById("app");
 
   // ---------------------------------------------------------------- helpers
@@ -59,6 +62,8 @@
   }
   function sev(name) { return SEVERITY[name] ? name : "low"; }
   function plural(n, one, many) { return n === 1 ? one : many; }
+  function fmt(n) { return Number(n || 0).toLocaleString(); }
+  function safeId(id) { return typeof id === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(id) ? id : null; }
   function timeAgo(epoch) {
     const s = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
     if (s < 10) return "just now";
@@ -69,13 +74,18 @@
   }
   function when(epoch) { return new Date(epoch * 1000).toLocaleString(); }
   function clock(epoch) { return new Date(epoch * 1000).toTimeString().slice(0, 8); }
-  function currentView() {
+  function isWide() { return typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 900px)").matches; }
+  function route() {
     const hash = location.hash || "#/";
-    if (hash.indexOf("#/live") === 0) return "live";
-    if (hash.indexOf("#/alerts") === 0) return "alerts";
-    if (hash.indexOf("#/sources") === 0) return "sources";
-    return "overview";
+    let m;
+    if (hash.indexOf("#/live") === 0) return { view: "live", id: null };
+    if (hash.indexOf("#/system") === 0 || hash.indexOf("#/sources") === 0) return { view: "system", id: null };
+    m = /^#\/incidents(?:\/([A-Za-z0-9_-]{1,40}))?/.exec(hash);
+    if (m) return { view: "incidents", id: m[1] || null };
+    if (hash.indexOf("#/alerts") === 0) return { view: "incidents", id: null };
+    return { view: "home", id: null };
   }
+  function currentView() { return route().view; }
 
   // -------------------------------------------------------------------- API
   async function request(method, path, body) {
@@ -93,6 +103,11 @@
     return res.json();
   }
 
+  function activeNow(incidents) {
+    const now = Date.now() / 1000;
+    return incidents.filter(function (i) { return i.status === "open" && now - i.updated < 600; });
+  }
+
   async function refresh() {
     try {
       if (!state.csrf) {
@@ -101,16 +116,26 @@
         state.version = session.version || "";
       }
       state.locked = false;
+      const r = route();
       const overview = await request("GET", "/api/overview");
-      let alerts = state.alerts;
-      const view = currentView();
-      if (view === "alerts") alerts = (await request("GET", "/api/alerts?status=" + encodeURIComponent(state.filter) + "&limit=100")).alerts;
-      else if (view === "live") alerts = (await request("GET", "/api/alerts?status=open&limit=30")).alerts;
+      let incidents = state.incidents, detail = state.detail, selected = state.selected;
+      if (r.view === "incidents") {
+        incidents = (await request("GET", "/api/incidents?status=" + encodeURIComponent(state.filter))).incidents;
+        selected = r.id || (isWide() && incidents.length ? incidents[0].id : null);
+        detail = null;
+        if (selected && safeId(selected)) {
+          try { detail = await request("GET", "/api/incidents/" + encodeURIComponent(selected)); }
+          catch (err) { if (err.message === "locked") throw err; detail = null; }
+        }
+      } else if (r.view === "live") {
+        incidents = (await request("GET", "/api/incidents?status=open")).incidents;
+      }
       // Counters and the chart change all the time: they are updated in place, never by redrawing the page.
       const stable = Object.assign({}, overview);
       ["heartbeat_age", "events_24h", "alerts_24h", "activity"].forEach(function (k) { delete stable[k]; });
-      const key = JSON.stringify([stable, alerts, state.filter, view, view === "live" ? inProgress(alerts).map(function (a) { return a.id; }) : null]);
-      state.overview = overview; state.alerts = alerts; state.error = null;
+      const key = JSON.stringify([stable, incidents, detail, state.filter, state.tag, r, selected,
+        r.view === "live" ? activeNow(incidents).map(function (i) { return i.id; }) : null]);
+      state.overview = overview; state.incidents = incidents; state.detail = detail; state.selected = selected; state.error = null;
       if (key !== state.lastKey) { state.lastKey = key; render(); }
       updateLive(overview);
     } catch (err) {
@@ -120,11 +145,22 @@
     }
   }
 
-  async function setStatus(id, status) {
-    try { await request("POST", "/api/alerts/" + encodeURIComponent(id) + "/status", { status: status }); }
+  async function setIncident(id, status) {
+    try { await request("POST", "/api/incidents/" + encodeURIComponent(id) + "/status", { status: status }); }
     catch (err) { state.error = "That did not work. Please try again."; }
     state.lastKey = "";
     refresh();
+  }
+
+  async function choosePalette(name) {
+    try { await request("POST", "/api/settings", { palette: name }); applyPalette(name); }
+    catch (err) { state.error = "That did not work. Please try again."; }
+    state.lastKey = "";
+    refresh();
+  }
+  function applyPalette(name) {
+    const known = state.overview && state.overview.palettes && state.overview.palettes.some(function (p) { return p.name === name; });
+    if (known && document.documentElement.getAttribute("data-palette") !== name) document.documentElement.setAttribute("data-palette", name);
   }
 
   // ------------------------------------------------------------------ pieces
@@ -132,70 +168,97 @@
     const s = SEVERITY[sev(name)];
     return h("span", { class: "badge sev-" + sev(name) }, h("span", { "aria-hidden": "true" }, s.icon), s.label);
   }
-
+  function tagList(tags, max) {
+    const list = (tags || []).filter(function (t) { return typeof t === "string" && t; });
+    if (!list.length) return null;
+    return h("div", { class: "tags" }, list.slice(0, max).map(function (t) { return h("span", { class: "tag" }, t); }),
+      list.length > max ? h("span", { class: "tag" }, "+" + (list.length - max)) : null);
+  }
   function techRow(label, value) { return [h("dt", null, label), h("dd", null, value)]; }
+  function pageHead(title, sub) { return h("div", { class: "page-head" }, h("h1", null, title), sub ? h("p", null, sub) : null); }
+  function section(title, body) { return h("section", { class: "d-sec" }, h("h3", null, title), body); }
 
-  function alertCard(a, standalone, compact) {
-    const t = a.technical || {};
-    const progress = a.progress;
-    const details = h("details", { class: "more" }, h("summary", null, "See more"),
-      h("dl", { class: "tech" },
-        techRow("Rule", h("span", { class: "mono" }, t.rule)),
-        techRow("Type", t.kind === "chain" ? "Attack chain (several steps)" : t.kind === "engine" ? "Erinix itself" : "Single event"),
-        a.remote ? techRow("Source address", h("span", { class: "mono" }, a.remote)) : null,
-        t.step ? techRow("Latest step", h("span", { class: "mono" }, t.step)) : null,
-        techRow("Response mode", RESPONSE[t.response] || t.response),
-        t.mitre && t.mitre.length ? techRow("MITRE ATT&CK", h("span", { class: "mono" }, t.mitre.join(", "))) : null,
-        t.anchor_pid ? techRow("Process", h("span", { class: "mono" }, "pid " + t.anchor_pid)) : null,
-        techRow("First seen", when(a.first_seen)),
-        techRow("Last update", when(a.updated) + " (revision " + t.revision + ")"),
-        t.evidence && t.evidence.length ? techRow("Evidence", h("span", { class: "mono" }, t.evidence.map(function (e) { return e[0] + ": " + e[1].join(", "); }).join(" | "))) : null,
-        t.detail ? techRow("Details", t.detail) : null));
-    details.open = !!state.open[a.id];
-    details.addEventListener("toggle", function () { state.open[a.id] = details.open; });
-    const bar = progress ? h("div", { class: "bar", "aria-hidden": "true" }) : null;
-    if (bar) { const fill = h("span"); fill.style.width = Math.round(100 * progress.done / Math.max(1, progress.total)) + "%"; bar.appendChild(fill); }
-    const fresh = Date.now() / 1000 - a.updated < 4 && a.status === "open";
-    return h("article", { class: "alert sev-" + sev(a.severity) + (standalone === true ? " glass" : "") + (compact ? " compact" : "") + (a.status === "dismissed" ? " is-dismissed" : "") + (fresh ? " fresh" : "") },
-      h("div", { class: "alert-head" }, badge(a.severity), h("h3", null, a.headline),
-        h("time", { datetime: new Date(a.updated * 1000).toISOString(), title: when(a.updated), "data-epoch": a.updated }, timeAgo(a.updated))),
-      a.why && !compact ? h("p", { class: "why" }, a.why) : null,
-      timelineView(a),
-      a.next_steps && a.next_steps.length && !compact ? h("div", { class: "next" }, h("strong", null, "What to do"),
-        h("ul", null, a.next_steps.map(function (s) { return h("li", null, s); }))) : null,
-      progress && !compact && !(a.steps && a.steps.length) ? h("div", { class: "steps" }, progress.complete ? "Attack completed all " + progress.total + " steps" : "Step " + progress.done + " of " + progress.total, bar) : null,
-      compact ? h("p", { class: "tl-more" }, h("a", { href: "#/alerts" }, "Details and what to do")) : details,
-      compact ? null : h("div", { class: "actions" },
-        a.status === "open"
-          ? h("button", { class: "btn", type: "button", onclick: function () { setStatus(a.id, "dismissed"); } }, "Dismiss")
-          : h("button", { class: "btn", type: "button", onclick: function () { setStatus(a.id, "open"); } }, "Reopen")));
+  function incidentRow(i, mode) {
+    const id = safeId(i.id);
+    const cls = "inc sev-" + sev(i.severity) + (i.status === "closed" ? " closed" : "") + (mode === "list" && state.selected === i.id ? " selected" : "");
+    return h("a", { class: cls, href: id ? "#/incidents/" + id : "#/incidents" },
+      h("div", { class: "inc-top" }, badge(i.severity), h("span", { class: "inc-who mono" }, i.who),
+        h("time", { datetime: new Date(i.updated * 1000).toISOString(), title: when(i.updated), "data-epoch": i.updated }, timeAgo(i.updated))),
+      h("h3", { class: "inc-title" }, i.headline),
+      tagList(i.tags, 4),
+      mode === "home" ? h("span", { class: "inc-go" }, "See what happened →") : null);
   }
 
   // ---------------------------------------------- what happened, step by step
-  function timelineView(a) {
+  function timelineView(a, title) {
     const steps = a.steps || [];
     const now = Date.now() / 1000;
-    if (steps.length) {
-      return h("div", { class: "timeline-wrap" }, h("strong", { class: "tl-title" }, "What happened, step by step"),
-        h("ol", { class: "timeline" }, steps.map(function (s) {
-          const state_ = ["done", "current", "pending"].indexOf(s.state) >= 0 ? s.state : "pending";
-          const detail = (s.count > 1 ? s.count + " times · last: " : "") + (s.detail || "");
-          return h("li", { class: "tl " + state_ + (s.time && now - s.time < 5 ? " fresh" : "") },
-            h("span", { class: "tl-dot", "aria-hidden": "true" }, state_ === "done" ? "✔" : ""),
-            h("div", { class: "tl-body" },
-              h("div", { class: "tl-head" }, h("span", { class: "tl-label" }, s.label),
-                s.time ? h("time", null, clock(s.time)) : state_ === "current" ? h("span", { class: "tl-wait" }, "waiting…") : null),
-              s.detail ? h("div", { class: "tl-detail mono" }, detail) : null));
-        })));
-    }
-    const seen = (a.timeline || []).slice(-6);
-    if (!seen.length) return null;
-    return h("div", { class: "timeline-wrap" }, h("strong", { class: "tl-title" }, "What was seen"),
-      h("ol", { class: "timeline" }, seen.map(function (e) {
-        return h("li", { class: "tl done" + (now - e.time < 5 ? " fresh" : "") }, h("span", { class: "tl-dot", "aria-hidden": "true" }, "✔"),
-          h("div", { class: "tl-body" }, h("div", { class: "tl-head" }, h("span", { class: "tl-label" }, e.label), h("time", null, clock(e.time))),
-            h("div", { class: "tl-detail mono" }, e.summary)));
+    if (!steps.length) return null;
+    return h("div", { class: "timeline-wrap" }, h("strong", { class: "tl-title" }, title || "What happened, step by step"),
+      h("ol", { class: "timeline" }, steps.map(function (s) {
+        const st = ["done", "current", "pending"].indexOf(s.state) >= 0 ? s.state : "pending";
+        const detail = (s.count > 1 ? s.count + " times · last: " : "") + (s.detail || "");
+        return h("li", { class: "tl " + st + (s.time && now - s.time < 5 ? " fresh" : "") },
+          h("span", { class: "tl-dot", "aria-hidden": "true" }, st === "done" ? "✔" : ""),
+          h("div", { class: "tl-body" },
+            h("div", { class: "tl-head" }, h("span", { class: "tl-label" }, s.label),
+              s.time ? h("time", null, clock(s.time)) : st === "current" ? h("span", { class: "tl-wait" }, "waiting…") : null),
+            s.detail ? h("div", { class: "tl-detail mono" }, detail) : null));
       })));
+  }
+
+  function technical(a) {
+    const t = a.technical || {};
+    return h("dl", { class: "tech" },
+      techRow("Rule", h("span", { class: "mono" }, t.rule)),
+      techRow("Type", t.kind === "chain" ? "Attack chain (several steps)" : t.kind === "engine" ? "Erinix itself" : "Single event"),
+      a.remote ? techRow("Source address", h("span", { class: "mono" }, a.remote)) : null,
+      t.step ? techRow("Latest step", h("span", { class: "mono" }, t.step)) : null,
+      techRow("Response mode", RESPONSE[t.response] || t.response),
+      t.mitre && t.mitre.length ? techRow("MITRE ATT&CK", h("span", { class: "mono" }, t.mitre.join(", "))) : null,
+      t.anchor_pid ? techRow("Process", h("span", { class: "mono" }, "pid " + t.anchor_pid)) : null,
+      techRow("First seen", when(a.first_seen)),
+      techRow("Last update", when(a.updated) + " (revision " + t.revision + ")"),
+      t.evidence && t.evidence.length ? techRow("Evidence", h("span", { class: "mono" }, t.evidence.map(function (e) { return e[0] + ": " + e[1].join(", "); }).join(" | "))) : null,
+      t.detail ? techRow("Details", t.detail) : null);
+  }
+
+  function attackCard(a) {
+    const details = h("details", { class: "more" }, h("summary", null, "Technical details"), technical(a));
+    details.open = !!state.open[a.id];
+    details.addEventListener("toggle", function () { state.open[a.id] = details.open; });
+    return h("article", { class: "attack sev-" + sev(a.severity) },
+      h("div", { class: "attack-head" }, badge(a.severity), a.tag ? h("span", { class: "tag" }, a.tag) : null, h("h4", null, a.headline)),
+      timelineView(a, "Steps"),
+      details);
+  }
+
+  function storyView(d) {
+    const rows = (d.timeline || []).map(function (e) {
+      return h("li", null, h("time", null, clock(e.time)),
+        h("div", { class: "what" }, e.tag ? h("span", { class: "tag" }, e.tag) : null, e.label + ": " + e.summary));
+    });
+    (d.alerts || []).forEach(function (a) {
+      (a.steps || []).filter(function (s) { return s.state === "current"; }).forEach(function (s) {
+        rows.push(h("li", { class: "waiting" }, h("time", null, "next"), h("div", { class: "what" }, h("span", { class: "tl-wait" }, "Possible next step: " + s.label + " — waiting…"))));
+      });
+    });
+    return rows.length ? h("ol", { class: "story" }, rows) : h("p", { class: "empty" }, "No events recorded for this incident yet.");
+  }
+
+  function incidentDetail(d) {
+    const closed = d.status === "closed";
+    return h("article", { class: "detail card glass sev-" + sev(d.severity) },
+      h("a", { class: "back", href: "#/incidents" }, "← All incidents"),
+      h("div", { class: "d-head" },
+        h("div", null, badge(d.severity), h("h2", { class: "d-who mono" }, d.who), h("p", { class: "d-title" }, d.headline)),
+        h("button", { class: "btn", type: "button", "data-action": "incident-status", onclick: function () { setIncident(d.id, closed ? "open" : "closed"); } }, closed ? "Reopen" : "Close incident")),
+      h("p", { class: "d-meta" }, "First seen " + when(d.first_seen) + " · last activity ", h("span", { "data-epoch": d.updated }, timeAgo(d.updated)), " · " + d.alert_count + " " + plural(d.alert_count, "attack", "attacks")),
+      h("p", { class: "d-why" }, d.summary),
+      tagList(d.tags, 12),
+      d.next_steps && d.next_steps.length ? section("What to do", h("ul", { class: "todo" }, d.next_steps.map(function (s) { return h("li", null, s); }))) : null,
+      section("What happened, in order", storyView(d)),
+      section("The attacks in this incident", h("div", { class: "stack" }, (d.alerts || []).map(attackCard))));
   }
 
   // --------------------------------------------------------- the live stream
@@ -204,10 +267,13 @@
     return f.events.filter(function (e) { return (!f.only || e.alert) && (f.pausedAt === null || e.id <= f.pausedAt); });
   }
   function feedRow(e, entering) {
+    const id = safeId(e.incident);
+    const tag = e.alert ? (e.tag ? (id ? h("a", { class: "tag", href: "#/incidents/" + id }, e.tag) : h("span", { class: "tag" }, e.tag)) : h("span", { class: "tag" }, "Part of an attack")) : null;
     return h("li", { class: "ev" + (e.alert ? " flagged sev-" + sev(e.severity) : "") + (entering ? " enter" : ""), "data-id": e.id },
-      h("time", null, clock(e.time)), h("span", { class: "ev-label" }, e.label), h("span", { class: "ev-text" }, e.summary),
-      e.remote ? h("span", { class: "ev-remote mono" }, e.remote) : null,
-      e.alert ? h("span", { class: "ev-tag" }, "Part of an attack") : null);
+      h("time", null, clock(e.time)),
+      h("div", { class: "ev-main" }, h("span", { class: "ev-label" }, e.label), e.summary),
+      e.remote ? h("span", { class: "ev-remote mono" }, e.remote) : h("span"),
+      tag ? h("div", { class: "ev-tags" }, tag) : null);
   }
   function fillFeed(ul, limit) {
     const rows = visibleEvents().slice(-limit).reverse();
@@ -250,11 +316,10 @@
       h("button", { class: "btn small", type: "button", "data-action": "pause", "aria-pressed": f.paused ? "true" : "false", onclick: togglePause }, f.paused ? "Resume" : "Pause"),
       h("button", { class: "btn small", type: "button", "data-action": "only", "aria-pressed": f.only ? "true" : "false", onclick: toggleOnly }, "Only suspicious"));
   }
-  function feedCard(limit, full) {
+  function feedList(limit) {
     const ul = h("ul", { id: "feed", class: "feed", "data-limit": limit });
     fillFeed(ul, limit);
-    return h("section", { class: "card glass feed-card" + (full ? "" : " compact") },
-      h("div", { class: "card-head" }, h("h2", null, "Live activity"), full ? feedControls() : h("a", { class: "more-link", href: "#/live" }, "Open the live view")), ul);
+    return ul;
   }
   async function pollFeed() {
     const f = state.feed;
@@ -281,12 +346,7 @@
     if (!document.hidden) pollFeed();
     window.setTimeout(feedTick, FEED_MS);
   }
-  function inProgress(alerts) {
-    const now = Date.now() / 1000;
-    return alerts.filter(function (a) { return a.status === "open" && now - a.updated < 900; })
-      .sort(function (x, y) { return y.updated - x.updated; });
-  }
-  // numbers, times and the chart move on their own: update them where they are
+  // numbers, times, the chart and the palette move on their own: update them where they are
   function updateLive(o) {
     document.querySelectorAll("[data-live]").forEach(function (el) {
       const v = o[el.getAttribute("data-live")];
@@ -297,7 +357,8 @@
       const k = JSON.stringify(o.activity);
       if (holder.getAttribute("data-k") !== k) { holder.setAttribute("data-k", k); holder.replaceChildren(sparkline(o.activity)); }
     }
-    document.querySelectorAll("time[data-epoch]").forEach(function (el) { el.textContent = timeAgo(Number(el.getAttribute("data-epoch"))); });
+    document.querySelectorAll("[data-epoch]").forEach(function (el) { el.textContent = timeAgo(Number(el.getAttribute("data-epoch"))); });
+    if (o.palette) applyPalette(o.palette);
   }
 
   function sparkline(activity) {
@@ -308,7 +369,7 @@
     svg.setAttribute("role", "img");
     svg.setAttribute("aria-label", "Events checked over the last 24 hours");
     const base = document.createElementNS(ns, "line");
-    ["x1", "0", "x2", String(W), "y1", String(H - 4), "y2", String(H - 4)].forEach(function (v, i, a) { if (i % 2 === 0) base.setAttribute(v, a[i + 1]); });
+    base.setAttribute("x1", "0"); base.setAttribute("x2", String(W)); base.setAttribute("y1", String(H - 4)); base.setAttribute("y2", String(H - 4));
     svg.appendChild(base);
     if (!activity.length) return svg;
     const max = Math.max(1, Math.max.apply(null, activity.map(function (p) { return p.events; })));
@@ -340,91 +401,107 @@
     return svg;
   }
 
-  function sourceList(o) {
-    if (!o.sources.length && !o.blind_spots.length) return h("p", { class: "empty" }, "No sources yet.");
-    return h("ul", { class: "plain" },
-      o.sources.map(function (s) {
-        return h("li", null, s.state === "ok" ? h("span", { class: "ok" }, "✔ ") : h("span", { class: "warn" }, "▲ "), s.name, s.detail && s.state !== "ok" ? " — " + s.detail : "");
-      }),
-      o.blind_spots.filter(function (b) { return !o.sources.some(function (s) { return b.indexOf(s.name + ":") === 0; }); })
-        .map(function (b) { return h("li", null, h("span", { class: "warn" }, "▲ "), "Blind spot: " + b); }));
-  }
-
   // ------------------------------------------------------------------- views
-  function statTile(label, value, note, tone, liveKey) {
-    return h("div", { class: "stat glass " + tone }, h("span", { class: "stat-label" }, label), h("strong", liveKey ? { "data-live": liveKey } : null, value), note ? h("span", { class: "stat-note" }, note) : null);
-  }
-
-  function viewOverview(o) {
+  function viewHome(o) {
+    const top = (o.incidents && o.incidents.top) || [], n = o.incidents ? o.incidents.open : 0;
     const st = STATES[o.state] || STATES.stopped;
-    const n = o.open.total;
-    const worst = o.open.critical ? "critical" : o.open.high ? "high" : o.open.medium ? "medium" : o.open.low ? "low" : null;
-    const watching = o.sources.filter(function (x) { return x.state === "ok"; }).length;
-    const blind = o.sources.length - watching;
-    const sub = [n === 0 ? "All quiet. " : n + " open " + plural(n, "alert", "alerts") + " · ", h("span", { "data-live": "events_24h" }, o.events_24h.toLocaleString()),
-      " events checked in the last 24 hours" + (n === 0 ? "." : "")];
+    const total = o.sources.length, watching = o.sources.filter(function (x) { return x.state === "ok"; }).length, blind = total - watching;
+    let headline, lead;
+    if (o.state === "stopped") { headline = "Erinix is not watching"; lead = "Nothing is being checked right now. Start the agent, or load demo data to look around."; }
+    else if (!top.length) { headline = "Everything looks fine"; lead = "Nothing suspicious is happening." + (total ? " Erinix is watching " + watching + " of " + total + " sources." : ""); }
+    else { headline = top[0].headline; lead = top[0].summary; }
+    const first = top.length ? safeId(top[0].id) : null;
     return [
       h("section", { class: "hero glass state-" + (STATES[o.state] ? o.state : "stopped") },
         h("div", { class: "hero-body" },
           h("div", { class: "hero-icon", "aria-hidden": "true" }, st.icon),
-          h("div", null, h("p", { class: "eyebrow" }, st.label), h("h1", null, o.headline), h("p", { class: "lead" }, sub),
-            n ? h("a", { class: "btn primary", href: "#/alerts" }, "Review " + n + " " + plural(n, "alert", "alerts")) : null)),
+          h("div", null, h("p", { class: "eyebrow" }, st.label), h("h1", null, headline), h("p", { class: "lead" }, lead),
+            h("div", { class: "hero-actions" },
+              first ? h("a", { class: "btn primary", href: "#/incidents/" + first }, "See what happened") : null,
+              h("a", { class: "btn", href: "#/live" }, "Watch live")))),
         h("img", { class: "hero-hog", src: "/static/hedgehog.svg", alt: "" })),
-      h("div", { class: "stats" },
-        statTile("Open alerts", String(n), worst ? SEVERITY[worst].label + " is the highest level" : "Nothing open", worst ? "sev-" + worst : "sev-low"),
-        statTile("Events checked", o.events_24h.toLocaleString(), "in the last 24 hours", "sev-low", "events_24h"),
-        statTile("Watching", watching + " of " + o.sources.length, blind ? blind + " " + plural(blind, "blind spot", "blind spots") : "No blind spots", blind ? "sev-medium" : "sev-low")),
-      h("div", { class: "grid" },
-        h("section", { class: "card glass" }, h("h2", null, "Needs attention"),
-          o.attention.length ? h("div", { class: "stack" }, o.attention.map(function (a) { return alertCard(a); })) : h("p", { class: "empty" }, "Nothing needs your attention."),
-          o.open.total > o.attention.length ? h("p", null, h("a", { href: "#/alerts" }, "See all " + o.open.total + " alerts")) : null),
-        h("div", { class: "side" },
-          feedCard(FEED_SHOWN.overview, false),
-          h("section", { class: "card glass" }, h("h2", null, "Last 24 hours"), h("div", { id: "spark-holder", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity)),
-            h("div", { class: "numbers" },
-              h("div", null, h("strong", { "data-live": "events_24h" }, o.events_24h.toLocaleString()), h("span", null, "events checked")),
-              h("div", null, h("strong", { "data-live": "alerts_24h" }, o.alerts_24h.toLocaleString()), h("span", null, "alerts raised")))),
-          h("section", { class: "card glass" }, h("h2", null, "What Erinix is watching"), sourceList(o)))),
+      h("section", { class: "card glass" }, h("h2", null, "What needs you"),
+        top.length ? h("div", { class: "stack" }, top.map(function (i) { return incidentRow(i, "home"); })) : h("p", { class: "empty" }, "Nothing needs your attention."),
+        n > top.length ? h("p", null, h("a", { href: "#/incidents" }, "See all " + n + " incidents")) : null),
+      h("section", { class: "card glass feed-card compact" },
+        h("div", { class: "card-head" }, h("h2", null, "Happening now"), h("a", { class: "more-link", href: "#/live" }, "Open the live view")),
+        feedList(FEED_SHOWN.home)),
+      h("p", { class: "facts" },
+        h("span", { class: blind ? "warn" : "ok" }, (blind ? "▲ " : "✔ ") + "Watching " + watching + " of " + total + " sources"),
+        h("span", null, h("strong", { "data-live": "events_24h" }, fmt(o.events_24h)), " events checked today"),
+        h("span", null, h("strong", { "data-live": "alerts_24h" }, fmt(o.alerts_24h)), " " + plural(o.alerts_24h, "alert", "alerts") + " raised"),
+        blind ? h("a", { href: "#/system" }, blind + " " + plural(blind, "blind spot", "blind spots")) : null),
     ];
   }
 
-  function viewLive(o) {
-    const active = inProgress(state.alerts);
-    return [
-      h("div", { class: "live-grid" },
-        feedCard(FEED_SHOWN.live, true),
-        h("section", { class: "card glass" }, h("h2", null, "Attacks in progress"),
-          active.length ? h("div", { class: "stack" }, active.map(function (a) { return alertCard(a, false, true); }))
-            : h("p", { class: "empty" }, "No attack in progress. Erinix is watching."))),
-    ];
-  }
-
-  function viewAlerts(o) {
-    const tabs = [["open", "Open"], ["dismissed", "Dismissed"], ["all", "All"]];
-    return [
-      h("div", { class: "tabs glass", role: "group", "aria-label": "Filter alerts" }, tabs.map(function (t) {
+  function viewIncidents(o) {
+    const r = route();
+    const tabs = [["open", "Open"], ["closed", "Closed"], ["all", "All"]];
+    const counts = {};
+    state.incidents.forEach(function (i) { (i.tags || []).forEach(function (t) { counts[t] = (counts[t] || 0) + 1; }); });
+    const names = Object.keys(counts).sort(function (a, b) { return a.localeCompare(b); });
+    const list = state.incidents.filter(function (i) { return !state.tag || (i.tags || []).indexOf(state.tag) >= 0; });
+    const left = h("section", { class: "list-pane card glass" },
+      h("div", { class: "tabs glass", role: "group", "aria-label": "Filter incidents" }, tabs.map(function (t) {
         return h("button", { type: "button", "aria-pressed": state.filter === t[0] ? "true" : "false",
           onclick: function () { state.filter = t[0]; state.lastKey = ""; refresh(); } }, t[1]);
       })),
-      state.alerts.length ? h("div", { class: "stack" }, state.alerts.map(function (a) { return alertCard(a, true); }))
-        : h("div", { class: "card glass" }, h("p", { class: "empty" }, state.filter === "open" ? "Nothing needs your attention." : "No alerts here.")),
+      names.length ? h("div", { class: "chips", role: "group", "aria-label": "Filter by type of attack" },
+        h("button", { type: "button", "aria-pressed": state.tag === null ? "true" : "false", onclick: function () { state.tag = null; state.lastKey = ""; render(); } }, "All types"),
+        names.map(function (t) {
+          return h("button", { type: "button", "aria-pressed": state.tag === t ? "true" : "false", onclick: function () { state.tag = state.tag === t ? null : t; state.lastKey = ""; render(); } }, t + " " + counts[t]);
+        })) : null,
+      list.length ? h("div", { class: "stack" }, list.map(function (i) { return incidentRow(i, "list"); }))
+        : h("p", { class: "empty" }, state.filter === "open" ? "Nothing needs your attention." : "No incidents here."));
+    const right = h("div", { class: "detail-pane", id: "detail" },
+      state.detail ? incidentDetail(state.detail)
+        : h("section", { class: "card glass" }, h("p", { class: "empty" }, r.id ? "This incident is not available any more." : "Pick an incident on the left to see what happened.")));
+    return [pageHead("Incidents", "Everything suspicious, grouped by who is behind it."), h("div", { class: "split" + (r.id ? " has-detail" : "") }, left, right)];
+  }
+
+  function viewLive(o) {
+    const active = activeNow(state.incidents);
+    return [
+      pageHead("Live", "Everything Erinix sees, as it happens. Attack events are highlighted."),
+      h("section", { class: "card glass feed-card" },
+        h("div", { class: "card-head" }, h("h2", null, "Live activity"), feedControls()),
+        h("div", { class: "now-strip" }, h("span", null, "Active now"),
+          active.length ? active.map(function (i) {
+            const id = safeId(i.id);
+            return h("a", { class: "now-chip sev-" + sev(i.severity), href: id ? "#/incidents/" + id : "#/incidents" }, h("span", { "aria-hidden": "true" }, SEVERITY[sev(i.severity)].icon), i.who + (i.tags && i.tags[0] ? " · " + i.tags[0] : ""));
+          }) : h("em", { class: "empty" }, "No attack in progress. Erinix is watching.")),
+        feedList(FEED_SHOWN.live)),
     ];
   }
 
-  function viewSources(o) {
+  function swatch(color) {
+    const dot = h("i");
+    if (/^#[0-9a-fA-F]{6}$/.test(color)) dot.style.background = color;
+    return dot;
+  }
+  function viewSystem(o) {
+    const mode = o.demo ? "Demo data (simulated attacks)" : o.mode === "live" ? "Live monitoring" : "Not monitoring";
     const rows = o.sources.map(function (s) {
       return h("tr", null, h("td", null, s.name), h("td", null, s.state === "ok" ? h("span", { class: "ok" }, "✔ Watching") : h("span", { class: "warn" }, "▲ Blind")), h("td", null, s.detail || ""));
     });
-    const mode = o.demo ? "Demo data (simulated attacks)" : o.mode === "live" ? "Live monitoring" : "Not monitoring";
     return [
-      h("section", { class: "card glass" }, h("h2", null, "Sources"),
+      pageHead("System", "What Erinix watches, how it looks, and what is coming."),
+      h("section", { class: "card glass" }, h("h2", null, "Status"),
+        h("dl", { class: "tech" }, techRow("State", (STATES[o.state] || STATES.stopped).label), techRow("Mode", mode), o.since ? techRow("Watching since", when(o.since)) : null, techRow("Version", o.version))),
+      h("section", { class: "card glass" }, h("h2", null, "What Erinix watches"),
         rows.length ? h("table", null, h("thead", null, h("tr", null, h("th", null, "Source"), h("th", null, "Status"), h("th", null, "Details"))), h("tbody", null, rows))
-          : h("p", { class: "empty" }, "No sources are configured yet.")),
-      h("section", { class: "card glass" }, h("h2", null, "Blind spots"),
-        o.blind_spots.length ? h("ul", { class: "plain" }, o.blind_spots.map(function (b) { return h("li", null, h("span", { class: "warn" }, "▲ "), b); }))
-          : h("p", { class: "empty" }, "None reported.")),
-      h("section", { class: "card glass" }, h("h2", null, "About this run"),
-        h("dl", { class: "tech" }, techRow("Mode", mode), techRow("Version", o.version), o.since ? techRow("Watching since", when(o.since)) : null)),
+          : h("p", { class: "empty" }, "No sources are configured yet."),
+        o.blind_spots.length ? h("ul", { class: "plain" }, o.blind_spots.map(function (b) { return h("li", null, h("span", { class: "warn" }, "▲ "), "Blind spot: " + b); })) : null),
+      h("section", { class: "card glass" }, h("h2", null, "Last 24 hours"), h("div", { id: "spark-holder", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity)),
+        h("p", { class: "facts" }, h("span", null, h("strong", { "data-live": "events_24h" }, fmt(o.events_24h)), " events checked"),
+          h("span", null, h("strong", { "data-live": "alerts_24h" }, fmt(o.alerts_24h)), " alerts raised"))),
+      h("section", { class: "card glass" }, h("h2", null, "Appearance"),
+        h("div", { class: "palettes", role: "group", "aria-label": "Colour palette" }, (o.palettes || []).map(function (p) {
+          return h("button", { class: "pal", type: "button", "data-palette": p.name, "aria-pressed": o.palette === p.name ? "true" : "false", onclick: function () { choosePalette(p.name); } },
+            h("span", { class: "swatches" }, (p.swatch || []).map(swatch)), h("strong", null, p.label), h("span", { class: "blurb" }, p.blurb));
+        }))),
+      h("section", { class: "card glass" }, h("h2", null, "Assessment"),
+        h("div", { class: "soon" }, h("span", { class: "tag" }, "Coming soon"), h("span", null, "A vulnerability and risk assessment of this machine will live here."))),
     ];
   }
 
@@ -444,6 +521,7 @@
     });
     const pill = document.getElementById("pill"), banner = document.getElementById("banner"), count = document.getElementById("nav-count");
     document.getElementById("version").textContent = state.version ? "v" + state.version : "";
+    document.title = "Erinix · " + (PAGE_NAMES[view] || "Home");
     const o = state.overview;
     if (state.locked) {
       pill.className = "pill state-stopped"; pill.textContent = "Signed out"; banner.hidden = true; count.hidden = true;
@@ -457,12 +535,14 @@
     }
     const st = STATES[o.state] || STATES.stopped;
     pill.className = "pill state-" + (STATES[o.state] ? o.state : "stopped");
-    pill.textContent = st.icon + " " + (o.state === "attention" ? o.open.total + " " + plural(o.open.total, "needs attention", "need attention") : st.label);
+    pill.textContent = st.icon + " " + st.label;
     banner.hidden = !o.demo;
     banner.textContent = o.demo ? "Showing demo data: these are simulated attacks, not real monitoring." : "";
-    count.hidden = !o.open.total;
-    count.textContent = String(o.open.total);
-    const body = view === "live" ? viewLive(o) : view === "alerts" ? viewAlerts(o) : view === "sources" ? viewSources(o) : viewOverview(o);
+    const open = o.incidents ? o.incidents.open : 0;
+    count.hidden = !open;
+    count.textContent = String(open);
+    applyPalette(o.palette);
+    const body = view === "live" ? viewLive(o) : view === "incidents" ? viewIncidents(o) : view === "system" ? viewSystem(o) : viewHome(o);
     const y = window.scrollY, same = state.renderedView === view;
     app.replaceChildren.apply(app, [state.error ? h("div", { class: "card glass", role: "alert" }, state.error) : null].concat(body).filter(Boolean));
     if (same && y) window.scrollTo(0, y);                       // a redraw never throws you back to the top

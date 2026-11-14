@@ -4,6 +4,8 @@ schema = 1
 # write the password databases.
 [[indicator]]
 id = "shadow-written-by-unexpected-process"
+tag = "Password file change"
+area = "this machine"
 title = "The password file was changed by an unusual program"
 why = "Only the standard account tools should write the password database. Another program doing it can mean someone is adding or changing accounts."
 next = [

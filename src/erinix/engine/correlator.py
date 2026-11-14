@@ -254,7 +254,7 @@ class Correlator:
             process=event.process.key if event.process else None, anchor=inst.anchor,
             remote_addr=remote, mono_ns=event.mono_ns, wall_ns=event.wall_ns,
             title=chain.title, why=chain.why, next_steps=chain.next_steps,
-            step_labels=tuple(s.label for s in chain.steps),
+            step_labels=tuple(s.label for s in chain.steps), tag=chain.tag, area=chain.area,
         )
 
     def _indicator_alert(self, ind: Indicator, event: Event) -> Alert | None:
@@ -278,7 +278,7 @@ class Correlator:
             process=event.process.key if event.process else None, anchor=None,
             remote_addr=getattr(event.payload, "remote_addr", None),
             mono_ns=event.mono_ns, wall_ns=event.wall_ns,
-            title=ind.title, why=ind.why, next_steps=ind.next_steps,
+            title=ind.title, why=ind.why, next_steps=ind.next_steps, tag=ind.tag, area=ind.area,
         )
 
     def _overload_alert(self, chain: Chain, event: Event) -> list[Alert]:

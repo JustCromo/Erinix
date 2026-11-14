@@ -1,28 +1,41 @@
 <!doctype html>
-<html lang="en" data-palette="bosco">
+<html lang="en" data-palette="cacao">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#08130d">
   <title>Erinix</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/palettes.css">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header class="top glass">
-    <a class="brand" href="#/" aria-label="Erinix home"><img src="/static/logo.svg" alt="" width="36" height="36"><span>Erinix</span></a>
-    <nav id="nav" aria-label="Main">
-      <a href="#/" data-view="overview">Overview</a>
-      <a href="#/live" data-view="live"><span class="live-dot" aria-hidden="true"></span>Live</a>
-      <a href="#/alerts" data-view="alerts">Alerts <span id="nav-count" class="count" hidden></span></a>
-      <a href="#/sources" data-view="sources">Sources</a>
-    </nav>
-    <div id="pill" class="pill state-stopped" role="status" aria-live="polite">Connecting…</div>
-  </header>
-  <div id="banner" class="banner" role="note" hidden></div>
-  <main id="app" tabindex="-1"></main>
-  <footer>Erinix · part of the Nemirix suite · <span id="version"></span></footer>
+  <div class="shell">
+    <aside class="sidebar glass" aria-label="Main menu">
+      <a class="brand" href="#/" aria-label="Erinix home"><img src="/static/logo.svg" alt="" width="40" height="40"><span>Erinix</span></a>
+      <nav id="nav">
+        <a href="#/" data-view="home">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>
+          <span class="lbl">Home</span></a>
+        <a href="#/incidents" data-view="incidents">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v5"/><path d="M12 16.5v.5"/></svg>
+          <span class="lbl">Incidents</span> <span id="nav-count" class="count" hidden></span></a>
+        <a href="#/live" data-view="live">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+          <span class="lbl">Live</span></a>
+        <a href="#/system" data-view="system">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>
+          <span class="lbl">System</span></a>
+      </nav>
+      <div class="side-foot">
+        <div id="pill" class="pill state-stopped" role="status" aria-live="polite">Connecting…</div>
+        <p class="tiny">Erinix · Nemirix suite <span id="version"></span></p>
+      </div>
+    </aside>
+    <div class="content">
+      <div id="banner" class="banner" role="note" hidden></div>
+      <main id="app" tabindex="-1"></main>
+    </div>
+  </div>
   <script src="/static/app.js" defer></script>
 </body>
 </html>

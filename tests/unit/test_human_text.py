@@ -136,3 +136,25 @@ def test_every_step_of_every_shipped_chain_has_a_plain_label():
         for step in chain.steps:
             assert 8 <= len(step.label) <= 60 and step.label[0].isupper() and not step.label.endswith("."), (chain.id, step.id)
             assert not any(j in step.label for j in ("T1", "pid", "uid", "syscall", "regex")), (chain.id, step.id)
+
+
+# ------------------------------------------------------------- tag and area
+@pytest.mark.parametrize("extra,ok", [('tag = "SQL injection"\narea = "website"', True), ('area = "logins"', True), ('area = "this machine"', True),
+                                      ('tag = ""', False), ('tag = 5', False), ('tag = "' + "a" * 33 + '"', False), ('tag = "line\\nbreak"', False),
+                                      ('area = "everywhere"', False), ('area = "Website"', False), ('area = ""', False), ('area = 3', False)])
+def test_tag_and_area_validation(tmp_path, extra, ok):
+    rs = write(tmp_path, IND.format(extra=extra))
+    assert bool(rs.indicators) == ok and (rs.problems == () if ok else len(rs.problems) == 1)
+
+
+def test_chains_take_tag_and_area_too(tmp_path):
+    body = STEP.format(label="").replace('link = "remote_ip"\n', 'link = "remote_ip"\ntag = "Scanning"\narea = "website"\n')
+    rs = write(tmp_path, body)
+    assert rs.problems == () and rs.chains[0].tag == "Scanning" and rs.chains[0].area == "website"
+
+
+def test_every_shipped_rule_has_a_tag_and_an_area():
+    rs = load_rules(RULES)
+    for rule in (*rs.chains, *rs.indicators):
+        assert 3 <= len(rule.tag) <= 32 and rule.tag[0].isupper() and rule.area in ("website", "logins", "this machine"), rule.id
+    assert len({r.tag for r in (*rs.chains, *rs.indicators)}) >= 8

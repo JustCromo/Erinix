@@ -33,7 +33,7 @@ MAX_LIST = 32
 MAX_LOGIN_TOKENS = 10
 ALERT_RETENTION_DAYS = 30
 STATS_RETENTION_HOURS = 48
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_EVENTS = 5000              # recent events kept for the live view (events tied to an alert are kept longer)
 PRUNE_EVERY = 200              # inserts between clean-ups
 EVENT_RETENTION_DAYS = 30
@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     mitre TEXT NOT NULL, remote TEXT, anchor_pid INTEGER, revision INTEGER NOT NULL,
     evidence TEXT NOT NULL, detail TEXT NOT NULL,
     first_seen REAL NOT NULL, updated REAL NOT NULL, status TEXT NOT NULL DEFAULT 'open',
-    step_labels TEXT NOT NULL DEFAULT '[]'
+    step_labels TEXT NOT NULL DEFAULT '[]',
+    tag TEXT NOT NULL DEFAULT '', area TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS alerts_by_status ON alerts(status, updated DESC);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -133,8 +134,10 @@ class Store:
     def _migrate(self) -> None:
         """Bring an older store up to date. Columns are only ever added."""
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(alerts)")}
-        if "step_labels" not in columns:
-            self._conn.execute("ALTER TABLE alerts ADD COLUMN step_labels TEXT NOT NULL DEFAULT '[]'")
+        for name, definition in (("step_labels", "TEXT NOT NULL DEFAULT '[]'"), ("tag", "TEXT NOT NULL DEFAULT ''"),
+                                 ("area", "TEXT NOT NULL DEFAULT ''")):
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE alerts ADD COLUMN {name} {definition}")
 
     def close(self) -> None:
         self._conn.close()
@@ -161,6 +164,7 @@ class Store:
             "evidence": json.dumps([[_clip(step, 120), [_clip(i, 64) for i in ids[:MAX_LIST]]] for step, ids in alert.evidence[:MAX_LIST]]),
             "detail": _clip(alert.detail), "first_seen": seen, "updated": seen,
             "step_labels": json.dumps([_clip(l, 120) for l in alert.step_labels[:MAX_LIST]]),
+            "tag": _clip(alert.tag, 40), "area": _clip(alert.area, 20),
         }
         with self._conn:
             existing = self._conn.execute("SELECT revision, status FROM alerts WHERE alert_id=?", (values["alert_id"],)).fetchone()
@@ -177,6 +181,8 @@ class Store:
     def _alert_dict(row: sqlite3.Row) -> dict:
         data = dict(row)
         data.setdefault("step_labels", "[]")
+        data.setdefault("tag", "")
+        data.setdefault("area", "")
         for key in ("next_steps", "mitre", "evidence", "step_labels"):
             try:
                 data[key] = json.loads(data[key])
@@ -271,10 +277,12 @@ class Store:
         """Events in order. `after` gives only newer ones; without it, the latest `limit`."""
         limit = max(1, min(int(limit), 500))
         where = "alert_id IS NOT NULL" if suspicious_only else "1=1"
+        base = "SELECT e.*, a.tag AS tag, a.remote AS alert_remote FROM events e LEFT JOIN alerts a ON a.alert_id = e.alert_id"
+        where = where.replace("alert_id", "e.alert_id")
         if after is None:
-            rows = self._conn.execute(f"SELECT * FROM events WHERE {where} ORDER BY id DESC LIMIT ?", (limit,)).fetchall()[::-1]
+            rows = self._conn.execute(f"{base} WHERE {where} ORDER BY e.id DESC LIMIT ?", (limit,)).fetchall()[::-1]
         else:
-            rows = self._conn.execute(f"SELECT * FROM events WHERE id>? AND {where} ORDER BY id ASC LIMIT ?", (min(int(after), MAX_ID), limit)).fetchall()
+            rows = self._conn.execute(f"{base} WHERE e.id>? AND {where} ORDER BY e.id ASC LIMIT ?", (min(int(after), MAX_ID), limit)).fetchall()
         return [self._event_dict(r) for r in rows]
 
     def last_event_id(self) -> int:

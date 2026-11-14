@@ -42,3 +42,5 @@ class Alert:
     why: str = ""
     next_steps: tuple[str, ...] = ()
     step_labels: tuple[str, ...] = ()   # plain-language name of every step of the chain, in order
+    tag: str = ""                       # kind of attack (groups incidents)
+    area: str = ""                      # website, logins or this machine

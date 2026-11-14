@@ -3,6 +3,8 @@ schema = 1
 # Password guessing against a login form, followed by a request that works.
 [[chain]]
 id = "web-login-bruteforce-success"
+tag = "Password guessing"
+area = "website"
 title = "Someone guessed a login password on the website ({remote})"
 why = "Many failed logins from one address, then one that worked. The account may now be in the wrong hands."
 next = [

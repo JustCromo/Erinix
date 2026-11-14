@@ -415,18 +415,15 @@ def cmd_demo(ctx: Context, args: list[str]) -> int:
             return _demo_live(ctx, store, ruleset, opts)
         now = time.time()
         total_events = total_alerts = 0
+        from erinix.recorder import Recorder
+
+        recorder = Recorder(store, Correlator(ruleset))
         for name, minutes_ago in (("web", 14), ("ssh", 9), ("revshell", 5), ("shadow", 2)):
             events = sorted(SCENARIOS[name].build(), key=lambda e: e.mono_ns)
-            correlator = Correlator(ruleset)
             start = now - minutes_ago * 60
-            count = 0
-            for ev in events:
-                for alert in correlator.process(ev):
-                    store.upsert_alert(dataclasses.replace(alert, wall_ns=int((start + ev.mono_ns / 1e9) * 1e9)), now=now)
-                    count += 1
+            for ev in events:                                    # the same path the live agent uses: events and alerts together
+                total_alerts += len(recorder.feed(dataclasses.replace(ev, wall_ns=int((start + ev.mono_ns / 1e9) * 1e9))))
             total_events += len(events)
-            total_alerts += count
-            store.bump(events=len(events), alerts=count, now=start)
         for i in range(48):                                  # a believable day of normal activity for the chart
             store.bump(events=int(60 + 45 * math.sin(i / 5.0) + (i * 7) % 23), now=now - i * 1800)
         store.set_meta("mode", "demo")
@@ -596,6 +593,42 @@ def cmd_stop(ctx: Context, args: list[str]) -> int:
     if not _stop_server(ctx, info):
         return 1
     _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Dashboard stopped."))
+    return 0
+
+
+# ------------------------------------------------------------------------ palette
+def cmd_palette(ctx: Context, args: list[str]) -> int:
+    """Choose the colours of the console and the dashboard (one setting, shared)."""
+    from erinix import palettes
+
+    pos, flags, _ = parse_args(args, flags=("--json",), max_positional=1)
+    current = palettes.stored_name()
+    if pos:
+        name = pos[0].lower()
+        if not palettes.is_known(name):
+            ctx.error(f"unknown palette {safe(pos[0])[:30]!r}. Choose one of: {', '.join(palettes.PALETTES)}")
+            return 2
+        store = _open(ctx, write=True)
+        if store is None:
+            return 1
+        with store:
+            store.set_meta("palette", name)
+        _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg(f"Palette set to {palettes.get(name).label}. "
+              "The dashboard changes by itself; open a new console to see it here."))
+        return 0
+    if "--json" in flags:
+        _json(ctx, {"current": current, "palettes": palettes.info()})
+        return 0
+    def build(width: int) -> str:
+        lines: list[list[Seg]] = []
+        for p in palettes.PALETTES.values():
+            mark = Seg((ctx.theme.glyph("ok") if p.name == current else " ") + " ", "ok", True)
+            lines.append([mark, Seg(p.name.ljust(9), "accent", True), Seg(p.label)])
+            lines += [[Seg("    "), Seg(safe(t), "dim")] for t in textwrap.wrap(p.blurb, max(20, width - 6))]
+        return "\n".join(paint_segs(ctx.theme, line) for line in lines)
+
+    ctx.emit(build)
+    _hint(ctx, Seg("Choose one with: ", "dim"), Seg("palette cacao", "accent"))
     return 0
 
 

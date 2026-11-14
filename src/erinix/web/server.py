@@ -28,7 +28,8 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from erinix import __version__, assets
+from erinix import __version__, assets, palettes
+from erinix.incidents import build_incidents, incident_detail, incident_id, set_incident_status
 from erinix.history import state_dir
 from erinix.store import STATUSES, Store, StoreError, default_db_path
 from erinix.summary import build_overview, empty_overview, humanize_full
@@ -68,6 +69,7 @@ def build_id() -> str:
     for name in ("index.html", "app.js", "style.css"):
         digest.update(root.joinpath(name).read_bytes())
     digest.update(Path(__file__).read_bytes())
+    digest.update(palettes.css().encode("utf-8"))
     return digest.hexdigest()[:12]
 
 
@@ -79,6 +81,7 @@ def _load_static() -> dict[str, tuple[bytes, str]]:
         "/static/app.js": (root.joinpath("app.js").read_bytes(), "text/javascript; charset=utf-8"),
     }
     svg = assets.logo_svg().encode("utf-8")
+    files["/static/palettes.css"] = (palettes.css().encode("utf-8"), "text/css; charset=utf-8")
     files["/static/logo.svg"] = (svg, "image/svg+xml")
     files["/static/hedgehog.svg"] = (assets.hedgehog_svg().encode("utf-8"), "image/svg+xml")
     files["/favicon.svg"] = (svg, "image/svg+xml")
@@ -302,10 +305,48 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(200, humanize_full(store, row)) if row else self._error(404)
             if path == "/api/events":
                 return self._events(store, query)
+            if path == "/api/incidents":
+                status = (query.get("status") or ["open"])[0]
+                if status not in ("open", "closed", "all"):
+                    return self._error(400, "Unknown status")
+                return self._json(200, {"incidents": [] if store is None else build_incidents(store, status)})
+            if path.startswith("/api/incidents/"):
+                data = None if store is None else incident_detail(store, path[len("/api/incidents/"):])
+                return self._json(200, data) if data else self._error(404)
             return self._error(404)
         finally:
             if store is not None:
                 store.close()
+
+    def _settings(self) -> None:
+        """The one setting for now: the colour palette, shared with the console."""
+        body = self._read_json()
+        if body is None:
+            return
+        name = body.get("palette") if isinstance(body, dict) and set(body) == {"palette"} else None
+        if not palettes.is_known(name):
+            return self._error(400, "Unknown palette")
+        store = self._open(write=True)
+        if store is None:
+            return self._error(404)
+        with store:
+            store.set_meta("palette", name)
+        self._json(200, {"ok": True})
+
+    def _incident_status(self, wanted: str) -> None:
+        body = self._read_json()
+        if body is None:
+            return
+        status = body.get("status") if isinstance(body, dict) else None
+        if status not in ("open", "closed"):
+            return self._error(400, "Unknown status")
+        store = self._open(write=True)
+        if store is None:
+            return self._error(404)
+        with store:
+            changed = set_incident_status(store, wanted, status)
+            found = changed or any(i["id"] == wanted for i in build_incidents(store, "all"))
+        return self._json(200, {"ok": True, "changed": changed}) if found else self._error(404)
 
     def _events(self, store: Store | None, query: dict[str, list[str]]) -> None:
         """The live stream: events newer than `after`, or the latest ones on the first call."""
@@ -321,7 +362,9 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(200, {"events": [], "last_id": 0})
         rows = store.list_events(after=after, limit=limit, suspicious_only=(query.get("suspicious") or ["0"])[0] == "1")
         events = [{"id": r["id"], "time": r["ts"], "kind": r["kind"], "label": r["label"], "summary": r["summary"], "remote": r["remote"],
-                   "alert": r["alert_id"], "step": r["step"], "severity": r["severity"]} for r in rows]
+                   "alert": r["alert_id"], "step": r["step"], "severity": r["severity"], "tag": r["tag"] or "",
+                   "incident": incident_id("ip:" + r["alert_remote"] if r["alert_remote"] else "local") if r["alert_id"] else None}
+                  for r in rows]
         return self._json(200, {"events": events, "last_id": store.last_event_id()})
 
     def _api_post(self, path: str) -> None:
@@ -333,6 +376,10 @@ class _Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(sent.encode("utf-8", "replace"), csrf.encode("utf-8")) or \
                 (origin is not None and origin not in self.server.allowed_origins):
             return self._error(403, "Request refused")
+        if path == "/api/settings":
+            return self._settings()
+        if path.startswith("/api/incidents/") and path.endswith("/status"):
+            return self._incident_status(path[len("/api/incidents/"):-len("/status")])
         prefix, suffix = "/api/alerts/", "/status"
         if not (path.startswith(prefix) and path.endswith(suffix)):
             return self._error(404)

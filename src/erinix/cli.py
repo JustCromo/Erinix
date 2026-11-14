@@ -14,6 +14,7 @@ from erinix.commands.builtin import build_registry
 from erinix.commands.registry import Context
 from erinix.console import Console
 from erinix.history import history_path
+from erinix.palettes import stored_name as stored_palette
 from erinix.summary import live_state
 from erinix.tui import terminal as term
 from erinix.tui.app import TuiApp
@@ -34,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         if sys.stdin.isatty() and sys.stdout.isatty():
             if plain or os.environ.get("TERM", "dumb") in ("", "dumb"):
                 return Console(registry, ctx).run()
-            theme = Theme.from_stream(sys.stdout)
+            theme = Theme.from_stream(sys.stdout, palette=stored_palette())
             if not color:
                 theme.color_level = 0
             app = TuiApp(registry, theme=theme, out=sys.stdout, history_file=history_path(), status_provider=live_state)

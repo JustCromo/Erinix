@@ -4,6 +4,8 @@ schema = 1
 # from that shell, then privilege escalation.
 [[chain]]
 id = "web-rce-revshell"
+tag = "Remote control"
+area = "this machine"
 title = "A web program started a command line and then connected out"
 why = "A web server has no normal reason to start a shell and then open a connection to another machine. This is the typical sign of an attacker who got control through the website."
 next = [
