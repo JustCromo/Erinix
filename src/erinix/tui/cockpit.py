@@ -25,8 +25,8 @@ SEV_ROLE = {"critical": "bad", "high": "bad", "medium": "warn", "low": "dim"}
 HELP = [
     "Tab / Shift-Tab  move between panels          1-5  jump to a panel",
     "Up / Down, j / k  select a row                 PgUp / PgDn  scroll faster",
-    "Enter  open the selected row                   x  close the selected incident",
-    "/  search in the panel (Esc clears)            z  zoom the panel to full screen",
+    "Enter  fill the screen with the panel, then open a row   Esc / q  go back",
+    "/  search in the panel (Esc clears)            x  close the selected incident",
     "r  show or hide routine activity               p  pause or resume the live feed",
     ":  type a command (alerts, status, help...)    s  what Erinix is watching",
     "w  open the web dashboard                      R  see every program (asks for your sudo password)",
@@ -115,6 +115,7 @@ class Cockpit:
         self.flash = ""
         self.done = False
         self._loaded = -1e9
+        self._last: list[str] | None = None
 
     # ------------------------------------------------------------------ data
     def refresh(self, force: bool = False) -> bool:
@@ -309,7 +310,9 @@ class Cockpit:
         panel = PANELS[self.focus]
         n = len(self.rows(panel))
         page = max(3, self.size_fn()[1] // 3)
-        if tok in ("q", "\x03", "\x04"):
+        if tok == "q" and self.zoom:
+            self.zoom = False
+        elif tok in ("q", "\x03", "\x04"):
             self.done = True
         elif tok == "\t":
             self.focus = (self.focus + 1) % len(PANELS)
@@ -346,7 +349,12 @@ class Cockpit:
         elif tok == "s":
             self.show("What Erinix is watching", self._sources_lines())
         elif tok in ("\r", "\n"):
-            self.open_row()
+            if self.zoom:
+                self.open_row()
+            else:
+                self.zoom = True                       # first Enter: the panel fills the screen, to read and select
+        elif tok == "\x1b" and self.zoom:
+            self.zoom = False
         elif tok == "x":
             self.close_incident()
         elif tok == "w":
@@ -395,7 +403,14 @@ class Cockpit:
 
     # ------------------------------------------------------------------ actions
     def show(self, title: str, lines: list[str]) -> None:
-        self.overlay_title, self.overlay, self.overlay_scroll, self.mode = title, [str(x) for x in lines], 0, "overlay"
+        import textwrap
+
+        width = max(20, self.size_fn()[0] - 6)
+        wrapped: list[str] = []
+        for x in lines:
+            x = safe(x)
+            wrapped += textwrap.wrap(x, width, subsequent_indent="    ", replace_whitespace=False, drop_whitespace=False) or [""]
+        self.overlay_title, self.overlay, self.overlay_scroll, self.mode = title, wrapped, 0, "overlay"
 
     def _sources_lines(self) -> list[str]:
         lines = [f"{s.get('name', '?'):<28} {s.get('state', '?'):<8} {s.get('detail', '')}" for s in self.data.overview.get("sources", [])]
@@ -429,7 +444,26 @@ class Cockpit:
             lines += ["", "Press x on the list to close this incident once you have dealt with it."]
             self.show(detail["headline"], lines)
         else:
-            self.show(TITLES[panel], [f"{k}: {v}" for k, v in item.items()])
+            self.show(*self.detail(panel, item))
+
+    def detail(self, panel: str, item: dict) -> tuple[str, list[str]]:
+        """A readable card for one row, one fact per line."""
+        yes = lambda v: "yes" if v else "no"
+        unknown = "unknown (press R in the cockpit to see every program)"
+        if panel == "ports":
+            return f"Port {item.get('port')}", [f"Program:      {item.get('program') or unknown}", f"Address:      {item.get('local')}",
+                    f"Open to the network: {yes(item.get('exposed'))}", f"User id:      {item.get('uid')}", f"Process id:   {item.get('pid') or '-'}"]
+        if panel == "connections":
+            return "Connection", [f"Program:      {item.get('program') or unknown}", f"From:         {item.get('local')}", f"To:           {item.get('remote')}",
+                                  f"Outside your network: {yes(item.get('external'))}", f"User id:      {item.get('uid')}", f"Process id:   {item.get('pid') or '-'}"]
+        if panel == "programs":
+            return str(item.get("name", "Program")), [f"Process id:   {item.get('pid')}", f"Parent id:    {item.get('ppid')}", f"User id:      {item.get('uid')}",
+                                                      "", "Command:", f"  {item.get('command', '')}"]
+        if panel == "live":
+            return str(item.get("label", "Event")), [f"Time:         {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(float(item.get('ts', 0))))}",
+                    f"What:         {item.get('summary', '')}", f"From:         {item.get('remote') or '-'}",
+                    f"Part of an attack: {yes(item.get('alert_id'))}" + (f" ({item.get('tag')})" if item.get("tag") else "")]
+        return TITLES[panel], [f"{k}: {v}" for k, v in item.items()]
 
     def close_incident(self) -> None:
         item = self.selected() if PANELS[self.focus] == "incidents" else None
@@ -504,6 +538,9 @@ class Cockpit:
     # ------------------------------------------------------------------ the loop
     def draw(self) -> None:
         lines = self.render()
+        if lines == self._last:                  # an unchanged screen is not repainted: repainting would clear a text selection
+            return
+        self._last = lines
         self.out.write("\x1b[H" + "\n".join(f"{ln}\x1b[K" for ln in lines))
         self.out.flush()
 
@@ -553,4 +590,5 @@ class Cockpit:
             self._stack.enter_context(term.raw_input_mode(self._fd))
             self._stack.enter_context(term.fullscreen(self.out, mouse=False))
             self.out.write("\x1b[?25l")
+            self._last = None
             self.draw()

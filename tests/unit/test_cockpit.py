@@ -87,6 +87,8 @@ def test_enter_opens_incident_and_x_closes_it(store_path, monkeypatch):
     c.refresh(True)
     assert c.data.incidents
     c.handle("\r")
+    assert c.zoom and c.mode == "normal"              # first Enter: the panel fills the screen
+    c.handle("\r")
     assert c.mode == "overlay" and "What happened" in "\n".join(c.overlay)
     c.handle("q")
     assert c.mode == "normal"
@@ -132,3 +134,29 @@ def test_sparkline_and_helpers():
     assert ck.ago(time.time() - 120, time.time()) == "2m"
     assert re.fullmatch(r"\d\d:\d\d:\d\d", ck.clock(time.time()))
     assert ck.clock("junk") == "--:--:--"
+
+
+def test_enter_goes_in_and_esc_goes_back(store_path):
+    c = make(store_path)
+    c.refresh(True)
+    c.handle("3")
+    c.handle("\r"); c.handle("\r")
+    text = "\n".join(c.overlay)
+    assert c.mode == "overlay" and "Port 22" in c.overlay_title and "unknown" in text
+    c.handle("\x1b")
+    assert c.mode == "normal" and c.zoom
+    c.handle("q")
+    assert not c.zoom and not c.done
+    c.handle("q")
+    assert c.done
+
+
+def test_unchanged_screen_is_not_repainted(store_path):
+    import io
+    c = make(store_path)
+    c.out = io.StringIO()
+    c.refresh(True)
+    c.draw()
+    first = c.out.getvalue()
+    c.draw()
+    assert c.out.getvalue() == first
