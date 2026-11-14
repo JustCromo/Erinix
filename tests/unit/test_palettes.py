@@ -53,12 +53,12 @@ def test_severity_colours_stay_distinct(variant):
 
 
 @pytest.mark.parametrize("variant", list(P.VARIANTS))
-def test_no_green_anywhere(variant):
-    """Green belongs to Nemirix: no colour of the palette may be greenish."""
+def test_the_identity_colours_are_never_green(variant):
+    """Green is Nemirix's: only the "ok" signal (checks, all quiet) may be green, nothing that gives Erinix its look."""
     import colorsys
 
     for name, value in P.VARIANTS[variant].items():
-        if not value.startswith("#"):
+        if not value.startswith("#") or name in ("ok", "on_ok"):
             continue
         r, g, b = (int(value[i:i + 2], 16) / 255 for i in (1, 3, 5))
         hue, sat, _ = colorsys.rgb_to_hls(r, g, b)[0] * 360, colorsys.rgb_to_hls(r, g, b)[2], 0

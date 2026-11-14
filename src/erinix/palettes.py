@@ -16,8 +16,9 @@ DEFAULT = "auto"
 LIGHT: Mapping[str, str] = {
     "bg": "#f6f1ea", "card": "#fffcf7", "card_2": "#faf6f0", "text": "#2b2420", "muted": "#6a5d54", "faint": "#6f6258",
     "border": "#e3d9ce", "primary": "#3f3a8c", "on_primary": "#ffffff", "accent": "#c77d5e",
-    # severity: strong fills (badges, stripes) with the colour of the text that sits on them; no green (kept for Nemirix)
-    "ok": "#1d63c4", "low": "#566685", "medium": "#e9a21a", "high": "#cc4a0b", "critical": "#c4122f",
+    # severity: strong fills (badges, stripes) with the colour of the text that sits on them.
+    # Green is only for "ok" (checks, all quiet); the identity colours are never green (green is Nemirix's)
+    "ok": "#2a7a45", "low": "#566685", "medium": "#e9a21a", "high": "#cc4a0b", "critical": "#c4122f",
     "on_ok": "#ffffff", "on_low": "#ffffff", "on_medium": "#2b2420", "on_high": "#ffffff", "on_critical": "#ffffff",
     "medium_text": "#8f5b00",                                  # amber that stays readable as text on paper
     "shadow": "rgba(43, 36, 32, .10)",
@@ -25,7 +26,7 @@ LIGHT: Mapping[str, str] = {
 DARK: Mapping[str, str] = {
     "bg": "#1b1716", "card": "#262120", "card_2": "#211c1b", "text": "#f3ede6", "muted": "#cfc3b8", "faint": "#b0a398",
     "border": "#3a3230", "primary": "#b9b4ff", "on_primary": "#1b1716", "accent": "#e8b4a0",
-    "ok": "#6fb1ff", "low": "#a3b1d1", "medium": "#ffc247", "high": "#ff8447", "critical": "#ff5468",
+    "ok": "#6fcf8a", "low": "#a3b1d1", "medium": "#ffc247", "high": "#ff8447", "critical": "#ff5468",
     "on_ok": "#1b1716", "on_low": "#1b1716", "on_medium": "#1b1716", "on_high": "#1b1716", "on_critical": "#1b1716",
     "medium_text": "#ffc247",
     "shadow": "rgba(0, 0, 0, .35)",
