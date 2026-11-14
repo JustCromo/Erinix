@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en" data-palette="cacao">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Erinix</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/palettes.css">
@@ -10,20 +11,22 @@
 </head>
 <body>
   <div class="shell">
-    <aside class="sidebar glass" aria-label="Main menu">
+    <aside class="sidebar" aria-label="Main menu">
       <a class="brand" href="#/" aria-label="Erinix home"><img src="/static/logo.svg" alt="" width="40" height="40"><span>Erinix</span></a>
       <nav id="nav">
+        <span class="nav-group">Monitoring</span>
         <a href="#/" data-view="home">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-home"/></svg>
           <span class="lbl">Home</span></a>
         <a href="#/incidents" data-view="incidents">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v5"/><path d="M12 16.5v.5"/></svg>
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-shield"/></svg>
           <span class="lbl">Incidents</span> <span id="nav-count" class="count" hidden></span></a>
         <a href="#/live" data-view="live">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-pulse"/></svg>
           <span class="lbl">Live</span></a>
+        <span class="nav-group">This machine</span>
         <a href="#/system" data-view="system">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#i-gear"/></svg>
           <span class="lbl">System</span></a>
       </nav>
       <div class="side-foot">

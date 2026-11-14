@@ -276,6 +276,7 @@ Development order: event model and process tree (done), rules (done), correlatio
 | 2026-11-15 | Alerts are grouped into incidents by who is behind them (an address, or "this machine"); rules carry a `tag` (kind of attack) and an `area` | One attacker doing six things is one story, not six alerts; people can also filter by kind of attack |
 | 2026-11-15 | Dashboard pages: Home, Incidents, Live, System, with a left menu; Home answers "is everything OK?" in one sentence | Readable by people who do not know security; no information repeated |
 | 2026-11-15 | One shared colour palette setting for the dashboard and the console (seven palettes, contrast checked by tests) | "Cozy" must never mean tiring to read |
+| 2026-11-14 | One own palette, "Plum and peach" (light + dark, follows the system), flat cards with thin borders; no glass, no glow; Nunito and icons shipped with the package | Calm and safe to read at a glance; distinct from Racoonix; nothing loaded from outside |
 
 ### Still to decide or reconfirm
 

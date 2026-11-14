@@ -21,7 +21,7 @@ erinix = "erinix.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"erinix.web" = ["static/*"]
+"erinix.web" = ["static/*", "static/fonts/*"]
 
 [tool.setuptools.data-files]
 "share/erinix/rules" = ["rules/*.toml"]

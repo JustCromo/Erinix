@@ -32,7 +32,8 @@ def test_page_has_no_inline_code_or_handlers():
     assert "<script>" not in HTML and not re.search(r"<script(?![^>]*\bsrc=)", HTML)
     assert not re.search(r"\son[a-z]+\s*=", HTML) and "style=" not in HTML and "<style" not in HTML
     assert "javascript:" not in HTML + JS + CSS
-    assert "@import" not in CSS and "url(" not in CSS and "expression(" not in CSS
+    assert "@import" not in CSS and "expression(" not in CSS
+    assert re.findall(r"url\(([^)]*)\)", CSS) == ['"/static/fonts/nunito-latin.woff2"']          # the one local font, nothing else
 
 
 def test_page_points_only_at_local_files():
