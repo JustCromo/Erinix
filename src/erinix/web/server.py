@@ -43,7 +43,7 @@ LOGIN_FAILURES = 10          # failed logins allowed per minute
 COOKIE = "erinix_session"
 STATIC_FILES = ("style.css", "app.js")
 
-CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; "
        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 HEADERS = {
     "Content-Security-Policy": CSP,
@@ -66,7 +66,7 @@ def build_id() -> str:
     so `erinix ui` can tell it must be replaced instead of reusing it."""
     digest = hashlib.sha256()
     root = resources.files("erinix.web").joinpath("static")
-    for name in ("index.html", "app.js", "style.css"):
+    for name in ("index.html", "app.js", "style.css", "icons.svg"):
         digest.update(root.joinpath(name).read_bytes())
     digest.update(Path(__file__).read_bytes())
     digest.update(palettes.css().encode("utf-8"))
@@ -79,6 +79,8 @@ def _load_static() -> dict[str, tuple[bytes, str]]:
         "/": (root.joinpath("index.html").read_bytes(), "text/html; charset=utf-8"),
         "/static/style.css": (root.joinpath("style.css").read_bytes(), "text/css; charset=utf-8"),
         "/static/app.js": (root.joinpath("app.js").read_bytes(), "text/javascript; charset=utf-8"),
+        "/static/icons.svg": (root.joinpath("icons.svg").read_bytes(), "image/svg+xml"),
+        "/static/fonts/nunito-latin.woff2": (root.joinpath("fonts").joinpath("nunito-latin.woff2").read_bytes(), "font/woff2"),
     }
     svg = assets.logo_svg().encode("utf-8")
     files["/static/palettes.css"] = (palettes.css().encode("utf-8"), "text/css; charset=utf-8")
@@ -319,18 +321,18 @@ class _Handler(BaseHTTPRequestHandler):
                 store.close()
 
     def _settings(self) -> None:
-        """The one setting for now: the colour palette, shared with the console."""
+        """The one setting for now: light, dark or automatic, shared with the console."""
         body = self._read_json()
         if body is None:
             return
-        name = body.get("palette") if isinstance(body, dict) and set(body) == {"palette"} else None
+        name = body.get("theme") if isinstance(body, dict) and set(body) == {"theme"} else None
         if not palettes.is_known(name):
-            return self._error(400, "Unknown palette")
+            return self._error(400, "Unknown appearance")
         store = self._open(write=True)
         if store is None:
             return self._error(404)
         with store:
-            store.set_meta("palette", name)
+            store.set_meta("theme", name)
         self._json(200, {"ok": True})
 
     def _incident_status(self, wanted: str) -> None:

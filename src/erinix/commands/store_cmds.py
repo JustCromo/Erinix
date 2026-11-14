@@ -596,9 +596,9 @@ def cmd_stop(ctx: Context, args: list[str]) -> int:
     return 0
 
 
-# ------------------------------------------------------------------------ palette
-def cmd_palette(ctx: Context, args: list[str]) -> int:
-    """Choose the colours of the console and the dashboard (one setting, shared)."""
+# ------------------------------------------------------------------------ theme
+def cmd_theme(ctx: Context, args: list[str]) -> int:
+    """Choose light, dark or automatic for the dashboard (one setting, shared). The console is always dark."""
     from erinix import palettes
 
     pos, flags, _ = parse_args(args, flags=("--json",), max_positional=1)
@@ -606,29 +606,30 @@ def cmd_palette(ctx: Context, args: list[str]) -> int:
     if pos:
         name = pos[0].lower()
         if not palettes.is_known(name):
-            ctx.error(f"unknown palette {safe(pos[0])[:30]!r}. Choose one of: {', '.join(palettes.PALETTES)}")
+            ctx.error(f"unknown appearance {safe(pos[0])[:30]!r}. Choose one of: {', '.join(palettes.MODES)}")
             return 2
         store = _open(ctx, write=True)
         if store is None:
             return 1
         with store:
-            store.set_meta("palette", name)
-        _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg(f"Palette set to {palettes.get(name).label}. "
-              "The dashboard changes by itself; open a new console to see it here."))
+            store.set_meta("theme", name)
+        _hint(ctx, Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg(f"Dashboard appearance set to {palettes.MODES[name][0].lower()}. "
+              "The open dashboard changes by itself."))
         return 0
     if "--json" in flags:
-        _json(ctx, {"current": current, "palettes": palettes.info()})
+        _json(ctx, {"current": current, "themes": palettes.info()})
         return 0
+
     def build(width: int) -> str:
         lines: list[list[Seg]] = []
-        for p in palettes.PALETTES.values():
-            mark = Seg((ctx.theme.glyph("ok") if p.name == current else " ") + " ", "ok", True)
-            lines.append([mark, Seg(p.name.ljust(9), "accent", True), Seg(p.label)])
-            lines += [[Seg("    "), Seg(safe(t), "dim")] for t in textwrap.wrap(p.blurb, max(20, width - 6))]
+        for name, (label, blurb) in palettes.MODES.items():
+            mark = Seg((ctx.theme.glyph("ok") if name == current else " ") + " ", "ok", True)
+            lines.append([mark, Seg(name.ljust(6), "accent", True), Seg(label)])
+            lines += [[Seg("    "), Seg(safe(t), "dim")] for t in textwrap.wrap(blurb, max(20, width - 6))]
         return "\n".join(paint_segs(ctx.theme, line) for line in lines)
 
     ctx.emit(build)
-    _hint(ctx, Seg("Choose one with: ", "dim"), Seg("palette cacao", "accent"))
+    _hint(ctx, Seg("Choose one with: ", "dim"), Seg("theme dark", "accent"))
     return 0
 
 

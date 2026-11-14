@@ -24,14 +24,14 @@ const detailOf = (inc, over = {}) => ({ ...inc, alerts: [alertObj()], timeline: 
     { id: 1, time: now() - 100, label: "Web request", summary: "GET /admin → 404", remote: "192.168.50.31", step: "s", severity: "low", tag: "Scanning", alert: "a".repeat(32), attack: "x" },
     { id: 2, time: now() - 50, label: "Web request", summary: "GET /p?id=1 UNION SELECT → 200", remote: "192.168.50.31", step: "s", severity: "high", tag: "SQL injection", alert: "a".repeat(32), attack: "x" }],
   next_steps: ["Check the web app logs", "Consider blocking 192.168.50.31"], ...over });
-const PALETTES = ["cacao", "miele", "prugna", "nebbia", "autunno", "bosco", "latte"].map(n => ({ name: n, label: n.toUpperCase(), blurb: "About " + n, dark: n !== "latte", swatch: ["#101010", "#e8a66a", "#a9c98a", "#d9b48b"] }));
+const THEMES = ["auto", "light", "dark"].map(n => ({ name: n, label: n.toUpperCase(), blurb: "About " + n, swatch: ["#101010", "#e8a66a", "#a9c98a", "#d9b48b"] }));
 const SOURCES = [{ name: "SSH logins", state: "ok" }, { name: "Web log", state: "ok" }, { name: "Programs", state: "ok" }, { name: "Kernel", state: "blind", detail: "need root" }];
 const overview = (over = {}) => {
   const { top: given, ...rest } = over;
   const top = given || [incident(), incident({ id: "iccc", who: "203.0.113.50", severity: "critical", tags: ["Password guessing"], headline: "Someone is guessing SSH passwords from 203.0.113.50" }), incident({ id: "iddd", who: "This machine", local: true, tags: ["Remote control"], headline: "A web program started a command line" })];
   return { state: "critical", headline: "x", demo: false, mode: "live", since: now() - 3600, heartbeat_age: 1, open: { total: top.length, low: 0, medium: 0, high: top.length, critical: 0 },
     dismissed: 0, attention: [], events_24h: 1234, alerts_24h: 3, activity: Array.from({ length: 48 }, (_, i) => ({ t: i * 1800, events: 10 + (i % 7), alerts: i === 40 ? 1 : 0 })),
-    sources: SOURCES, blind_spots: ["Kernel: need root"], version: "9.9.9", incidents: { open: top.length, top }, palette: "cacao", palettes: PALETTES, ...rest };
+    sources: SOURCES, blind_spots: ["Kernel: need root"], version: "9.9.9", incidents: { open: top.length, top }, theme: "auto", themes: THEMES, ...rest };
 };
 const mkEvent = (id, o = {}) => ({ id, time: now() - 10 + id / 100, kind: "web.request", label: "Web request", summary: "GET /p" + id + " → 200", remote: "10.0.0.1", alert: null, step: null, severity: null, tag: "", incident: null, ...o });
 
@@ -64,7 +64,7 @@ async function run({ hash = "#/", data = {}, status = 200, reject = false, needs
       const st = new URL(path, "http://x").searchParams.get("status") || "open";
       return ok({ incidents: live.incidents.filter(i => st === "all" || (st === "open" ? i.status === "open" : i.status === "closed")) });
     }
-    if (path === "/api/settings") { live.palettePosted = JSON.parse(opts.body).palette; live.overview = { ...live.overview, palette: live.palettePosted }; return ok({ ok: true }); }   // the server remembers it
+    if (path === "/api/settings") { live.themePosted = JSON.parse(opts.body).theme; live.overview = { ...live.overview, theme: live.themePosted }; return ok({ ok: true }); }   // the server remembers it
     return ok({}, 404);
   };
   w.eval(script);
@@ -239,26 +239,30 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
   checks.system_sources_and_blind_spots = d.querySelectorAll("table tbody tr").length === 4 && text(t.w, "table").includes("Blind") && text(t.w, ".plain").includes("Blind spot: Kernel: need root");
   checks.system_status = text(t.w, "#app").includes("Live monitoring") && text(t.w, "#app").includes("9.9.9") && text(t.w, "#app").includes("Coming soon");
   const pals = [...d.querySelectorAll(".pal")];
-  checks.system_palette_picker = pals.length === 7 && pals[0].getAttribute("aria-pressed") === "true" && pals[1].getAttribute("aria-pressed") === "false" && pals[0].querySelectorAll("i").length === 4;
+  checks.system_theme_picker = pals.length === 3 && pals[0].getAttribute("aria-pressed") === "true" && pals[1].getAttribute("aria-pressed") === "false" && pals[0].querySelectorAll("i").length === 4;
   checks.system_swatches_use_the_given_colour = pals[0].querySelector("i").style.background !== "";
-  pals[3].click();
+  checks.system_auto_leaves_the_system_in_charge = !d.documentElement.hasAttribute("data-theme");
+  pals[2].click();
   await sleep(1300);
   const post = t.calls.find(c => c.path === "/api/settings");
-  checks.system_palette_request = !!post && post.method === "POST" && post.body === '{"palette":"nebbia"}' && post.headers["X-Erinix-CSRF"] === "tok";
-  checks.system_palette_applies_at_once = d.documentElement.getAttribute("data-palette") === "nebbia";
+  checks.system_theme_request = !!post && post.method === "POST" && post.body === '{"theme":"dark"}' && post.headers["X-Erinix-CSRF"] === "tok";
+  checks.system_theme_applies_at_once = d.documentElement.getAttribute("data-theme") === "dark";
+  [...d.querySelectorAll(".pal")][0].click();
+  await sleep(1300);
+  checks.system_auto_again_removes_the_forced_theme = !d.documentElement.hasAttribute("data-theme");
   t.close();
 
-  const o = await run({ hash: "#/", data: { overview: overview({ palette: "prugna" }) }, wait: 400 });
-  checks.palette_from_the_store_is_applied = o.doc.documentElement.getAttribute("data-palette") === "prugna";
-  o.live.overview = overview({ palette: "x'; } body{display:none" });
+  const o = await run({ hash: "#/", data: { overview: overview({ theme: "dark" }) }, wait: 400 });
+  checks.theme_from_the_store_is_applied = o.doc.documentElement.getAttribute("data-theme") === "dark";
+  o.live.overview = overview({ theme: "x'; } body{display:none" });
   await o.w.__erinix.refresh();
-  checks.unknown_palette_is_ignored = o.doc.documentElement.getAttribute("data-palette") === "prugna";
+  checks.unknown_theme_is_ignored = o.doc.documentElement.getAttribute("data-theme") === "dark";
   o.close();
 
-  const evil = overview({ palettes: [{ name: "cacao", label: "<b>L</b>", blurb: "<i>b</i>", dark: true, swatch: ["red; background:url(http://evil/x)", "#e8a66a", "not a colour", "#a9c98a"] }] });
+  const evil = overview({ themes: [{ name: "auto", label: "<b>L</b>", blurb: "<i>b</i>", swatch: ["red; background:url(http://evil/x)", "#e8a66a", "not a colour", "#a9c98a"] }] });
   const e = await run({ hash: "#/system", data: { overview: evil }, wait: 400 });
   const dots = [...e.doc.querySelectorAll(".pal i")];
-  checks.palette_swatches_are_checked = dots.length === 4 && dots[0].style.background === "" && dots[2].style.background === "" && dots[1].style.background !== "" && e.doc.querySelectorAll(".pal b, .pal i b").length === 0;
+  checks.theme_swatches_are_checked = dots.length === 4 && dots[0].style.background === "" && dots[2].style.background === "" && dots[1].style.background !== "" && e.doc.querySelectorAll(".pal b, .pal i b").length === 0;
   e.close();
 }
 

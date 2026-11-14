@@ -259,7 +259,7 @@ def build_registry() -> Registry:
         ("serve", "Run the dashboard in this terminal", "serve [--port N]", "Dashboard", sc.cmd_serve, ("--port",)),
         ("stop", "Stop the dashboard", "stop", "Dashboard", sc.cmd_stop, ()),
         ("demo", "Load simulated attacks to try Erinix", "demo [--reset | --live]", "Demo", sc.cmd_demo, ("--reset", "--live", "--speed", "--for", "--force")),
-        ("palette", "Choose the colours (console and dashboard)", "palette [name]", "Setup", sc.cmd_palette, ("--json", "cacao", "miele", "prugna", "nebbia", "autunno", "bosco", "latte")),
+        ("theme", "Choose light, dark or automatic (dashboard)", "theme [auto|light|dark]", "Setup", sc.cmd_theme, ("--json", "auto", "light", "dark")),
         ("install-app", "Add Erinix to your app menu (no venv needed)", "install-app [--terminal NAME]", "Setup", sc.cmd_install_app, ("--terminal", "--force")),
         ("uninstall-app", "Remove the app menu entry", "uninstall-app", "Setup", sc.cmd_uninstall_app, ()),
     ):

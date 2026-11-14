@@ -96,12 +96,12 @@ def test_the_page_is_public_with_strict_headers(dash):
     status, h, body = call(dash, "GET", "/")
     assert status == 200 and h["content-type"].startswith("text/html") and b"Erinix" in body
     csp = h["content-security-policy"]
-    for part in ("default-src 'none'", "script-src 'self'", "style-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "connect-src 'self'"):
+    for part in ("default-src 'none'", "script-src 'self'", "style-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "connect-src 'self'", "font-src 'self'"):
         assert part in csp
     assert "unsafe-inline" not in csp and "unsafe-eval" not in csp and "*" not in csp
     assert h["x-content-type-options"] == "nosniff" and h["x-frame-options"] == "DENY" and h["referrer-policy"] == "no-referrer"
     assert h["cache-control"] == "no-store" and "python" not in h.get("server", "").lower()
-    for path, kind in (("/static/app.js", "javascript"), ("/static/style.css", "css"), ("/static/logo.svg", "svg"), ("/static/hedgehog.svg", "svg"), ("/favicon.svg", "svg")):
+    for path, kind in (("/static/app.js", "javascript"), ("/static/style.css", "css"), ("/static/logo.svg", "svg"), ("/static/hedgehog.svg", "svg"), ("/static/icons.svg", "svg"), ("/static/fonts/nunito-latin.woff2", "woff2"), ("/favicon.svg", "svg")):
         s, hh, b = call(dash, "GET", path)
         assert s == 200 and kind in hh["content-type"] and b
 
@@ -455,7 +455,7 @@ def test_alerts_come_with_their_steps_and_timeline(dash):
     assert overview["attention"][0]["steps"] and "events_24h" in overview
 
 
-# ------------------------------------------------- incidents, settings, palettes
+# ------------------------------------------------- incidents, settings, appearance
 def seed_attacks(server):
     from pathlib import Path
 
@@ -478,11 +478,11 @@ def test_palette_stylesheet_is_served_and_complete(dash):
     assert b"@import" not in body and b"url(" not in body
 
 
-def test_overview_carries_incidents_and_the_palette_choice(dash):
+def test_overview_carries_incidents_and_the_appearance_choice(dash):
     seed_attacks(dash)
     cookie, _ = sign_in(dash)
     o = get_json(dash, "/api/overview", cookie)[1]
-    assert o["incidents"]["open"] >= 4 and len(o["incidents"]["top"]) == 3 and o["palette"] == "cacao" and len(o["palettes"]) == 7
+    assert o["incidents"]["open"] >= 4 and len(o["incidents"]["top"]) == 3 and o["theme"] == "auto" and len(o["themes"]) == 3
     assert o["incidents"]["top"][0]["severity"] == "critical" and o["incidents"]["top"][0]["tags"]
 
 
@@ -539,31 +539,31 @@ def test_incident_changes_need_the_same_protections_and_valid_input(dash):
     assert all(i["status"] == "open" for i in get_json(dash, "/api/incidents", cookie)[1]["incidents"])
 
 
-def test_choosing_a_palette(dash):
+def test_choosing_the_appearance(dash):
     cookie, csrf = sign_in(dash)
-    status, _, _ = post(dash, "/api/settings", cookie, csrf, {"palette": "nebbia"})
+    status, _, _ = post(dash, "/api/settings", cookie, csrf, {"theme": "dark"})
     assert status == 200
-    assert get_json(dash, "/api/overview", cookie)[1]["palette"] == "nebbia"
+    assert get_json(dash, "/api/overview", cookie)[1]["theme"] == "dark"
     with Store(dash.db_path, readonly=True) as s:
-        assert s.get_meta("palette") == "nebbia"                                            # the console reads the same setting
+        assert s.get_meta("theme") == "dark"                                            # the console reads the same setting
 
 
-@pytest.mark.parametrize("body", [{"palette": "nope"}, {"palette": "cacao\"; } body { display:none"}, {"palette": ["cacao"]}, {"palette": None},
-                                  {"palette": "cacao", "other": 1}, {"theme": "cacao"}, {}, ["cacao"], "cacao", b"not json", {"palette": "../cacao"},
-                                  {"palette": "CACAO"}, {"palette": "a" * 400}])
-def test_bad_palette_requests_change_nothing(dash, body):
+@pytest.mark.parametrize("body", [{"theme": "nope"}, {"theme": "dark\"; } body { display:none"}, {"theme": ["dark"]}, {"theme": None},
+                                  {"theme": "dark", "other": 1}, {"palette": "dark"}, {}, ["dark"], "dark", b"not json", {"theme": "../dark"},
+                                  {"theme": "DARK"}, {"theme": "a" * 400}, {"theme": "cacao"}])
+def test_bad_appearance_requests_change_nothing(dash, body):
     cookie, csrf = sign_in(dash)
     assert post(dash, "/api/settings", cookie, csrf, body)[0] == 400
-    assert get_json(dash, "/api/overview", cookie)[1]["palette"] == "cacao"
+    assert get_json(dash, "/api/overview", cookie)[1]["theme"] == "auto"
 
 
 def test_settings_need_a_session_csrf_and_a_local_origin(dash):
     cookie, csrf = sign_in(dash)
-    assert post(dash, "/api/settings", "", csrf, {"palette": "latte"})[0] == 401
-    assert post(dash, "/api/settings", cookie, "", {"palette": "latte"})[0] == 403
-    assert post(dash, "/api/settings", cookie, csrf, {"palette": "latte"}, Origin="http://evil.example.com")[0] == 403
+    assert post(dash, "/api/settings", "", csrf, {"theme": "light"})[0] == 401
+    assert post(dash, "/api/settings", cookie, "", {"theme": "light"})[0] == 403
+    assert post(dash, "/api/settings", cookie, csrf, {"theme": "light"}, Origin="http://evil.example.com")[0] == 403
     assert call(dash, "GET", "/api/settings", headers={"Cookie": cookie})[0] == 404
-    assert get_json(dash, "/api/overview", cookie)[1]["palette"] == "cacao"
+    assert get_json(dash, "/api/overview", cookie)[1]["theme"] == "auto"
 
 
 def test_events_know_their_attack_type_and_incident(dash):

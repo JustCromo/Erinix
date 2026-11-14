@@ -15,10 +15,10 @@
     critical: { label: "Critical", icon: "✖" },
   };
   const STATES = {
-    protected: { icon: "✔", label: "All quiet" },
-    attention: { icon: "▲", label: "Worth a look" },
-    critical: { icon: "✖", label: "Needs you now" },
-    stopped: { icon: "■", label: "Not running" },
+    protected: { icon: "✔", sprite: "i-check", label: "All quiet" },
+    attention: { icon: "▲", sprite: "i-alert", label: "Worth a look" },
+    critical: { icon: "✖", sprite: "i-x", label: "Needs you now" },
+    stopped: { icon: "■", sprite: "i-pause", label: "Not running" },
   };
   const RESPONSE = {
     report_only: "Watch only: Erinix reports, it does not act",
@@ -59,6 +59,14 @@
     }
     for (let i = 2; i < arguments.length; i++) add(el, arguments[i]);
     return el;
+  }
+  // Icons come from one sprite (/static/icons.svg); the name is only ever taken from our own tables
+  function iconEl(name) {
+    const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg"), use = document.createElementNS(ns, "use");
+    svg.setAttribute("class", "ico"); svg.setAttribute("aria-hidden", "true");
+    use.setAttribute("href", "/static/icons.svg#" + name);
+    svg.appendChild(use);
+    return svg;
   }
   function sev(name) { return SEVERITY[name] ? name : "low"; }
   function plural(n, one, many) { return n === 1 ? one : many; }
@@ -152,15 +160,19 @@
     refresh();
   }
 
-  async function choosePalette(name) {
-    try { await request("POST", "/api/settings", { palette: name }); applyPalette(name); }
+  async function chooseTheme(name) {
+    try { await request("POST", "/api/settings", { theme: name }); applyTheme(name); }
     catch (err) { state.error = "That did not work. Please try again."; }
     state.lastKey = "";
     refresh();
   }
-  function applyPalette(name) {
-    const known = state.overview && state.overview.palettes && state.overview.palettes.some(function (p) { return p.name === name; });
-    if (known && document.documentElement.getAttribute("data-palette") !== name) document.documentElement.setAttribute("data-palette", name);
+  // "auto" leaves the attribute off, so the system decides (light by day, dark at night); "light" and "dark" force one
+  function applyTheme(name) {
+    const known = state.overview && state.overview.themes && state.overview.themes.some(function (p) { return p.name === name; });
+    if (!known) return;
+    const root = document.documentElement;
+    if (name === "auto") root.removeAttribute("data-theme");
+    else if (root.getAttribute("data-theme") !== name) root.setAttribute("data-theme", name);
   }
 
   // ------------------------------------------------------------------ pieces
@@ -248,7 +260,7 @@
 
   function incidentDetail(d) {
     const closed = d.status === "closed";
-    return h("article", { class: "detail card glass sev-" + sev(d.severity) },
+    return h("article", { class: "detail card sev-" + sev(d.severity) },
       h("a", { class: "back", href: "#/incidents" }, "← All incidents"),
       h("div", { class: "d-head" },
         h("div", null, badge(d.severity), h("h2", { class: "d-who mono" }, d.who), h("p", { class: "d-title" }, d.headline)),
@@ -346,7 +358,7 @@
     if (!document.hidden) pollFeed();
     window.setTimeout(feedTick, FEED_MS);
   }
-  // numbers, times, the chart and the palette move on their own: update them where they are
+  // numbers, times, the chart and the appearance move on their own: update them where they are
   function updateLive(o) {
     document.querySelectorAll("[data-live]").forEach(function (el) {
       const v = o[el.getAttribute("data-live")];
@@ -358,7 +370,7 @@
       if (holder.getAttribute("data-k") !== k) { holder.setAttribute("data-k", k); holder.replaceChildren(sparkline(o.activity)); }
     }
     document.querySelectorAll("[data-epoch]").forEach(function (el) { el.textContent = timeAgo(Number(el.getAttribute("data-epoch"))); });
-    if (o.palette) applyPalette(o.palette);
+    if (o.theme) applyTheme(o.theme);
   }
 
   function sparkline(activity) {
@@ -412,18 +424,18 @@
     else { headline = top[0].headline; lead = top[0].summary; }
     const first = top.length ? safeId(top[0].id) : null;
     return [
-      h("section", { class: "hero glass state-" + (STATES[o.state] ? o.state : "stopped") },
+      h("section", { class: "hero card state-" + (STATES[o.state] ? o.state : "stopped") },
         h("div", { class: "hero-body" },
-          h("div", { class: "hero-icon", "aria-hidden": "true" }, st.icon),
+          h("div", { class: "hero-icon", "aria-hidden": "true" }, iconEl(st.sprite)),
           h("div", null, h("p", { class: "eyebrow" }, st.label), h("h1", null, headline), h("p", { class: "lead" }, lead),
             h("div", { class: "hero-actions" },
               first ? h("a", { class: "btn primary", href: "#/incidents/" + first }, "See what happened") : null,
               h("a", { class: "btn", href: "#/live" }, "Watch live")))),
         h("img", { class: "hero-hog", src: "/static/hedgehog.svg", alt: "" })),
-      h("section", { class: "card glass" }, h("h2", null, "What needs you"),
+      h("section", { class: "card" }, h("h2", null, "What needs you"),
         top.length ? h("div", { class: "stack" }, top.map(function (i) { return incidentRow(i, "home"); })) : h("p", { class: "empty" }, "Nothing needs your attention."),
         n > top.length ? h("p", null, h("a", { href: "#/incidents" }, "See all " + n + " incidents")) : null),
-      h("section", { class: "card glass feed-card compact" },
+      h("section", { class: "card feed-card compact" },
         h("div", { class: "card-head" }, h("h2", null, "Happening now"), h("a", { class: "more-link", href: "#/live" }, "Open the live view")),
         feedList(FEED_SHOWN.home)),
       h("p", { class: "facts" },
@@ -441,8 +453,8 @@
     state.incidents.forEach(function (i) { (i.tags || []).forEach(function (t) { counts[t] = (counts[t] || 0) + 1; }); });
     const names = Object.keys(counts).sort(function (a, b) { return a.localeCompare(b); });
     const list = state.incidents.filter(function (i) { return !state.tag || (i.tags || []).indexOf(state.tag) >= 0; });
-    const left = h("section", { class: "list-pane card glass" },
-      h("div", { class: "tabs glass", role: "group", "aria-label": "Filter incidents" }, tabs.map(function (t) {
+    const left = h("section", { class: "list-pane card" },
+      h("div", { class: "tabs", role: "group", "aria-label": "Filter incidents" }, tabs.map(function (t) {
         return h("button", { type: "button", "aria-pressed": state.filter === t[0] ? "true" : "false",
           onclick: function () { state.filter = t[0]; state.lastKey = ""; refresh(); } }, t[1]);
       })),
@@ -455,7 +467,7 @@
         : h("p", { class: "empty" }, state.filter === "open" ? "Nothing needs your attention." : "No incidents here."));
     const right = h("div", { class: "detail-pane", id: "detail" },
       state.detail ? incidentDetail(state.detail)
-        : h("section", { class: "card glass" }, h("p", { class: "empty" }, r.id ? "This incident is not available any more." : "Pick an incident on the left to see what happened.")));
+        : h("section", { class: "card" }, h("p", { class: "empty" }, r.id ? "This incident is not available any more." : "Pick an incident on the left to see what happened.")));
     return [pageHead("Incidents", "Everything suspicious, grouped by who is behind it."), h("div", { class: "split" + (r.id ? " has-detail" : "") }, left, right)];
   }
 
@@ -463,7 +475,7 @@
     const active = activeNow(state.incidents);
     return [
       pageHead("Live", "Everything Erinix sees, as it happens. Attack events are highlighted."),
-      h("section", { class: "card glass feed-card" },
+      h("section", { class: "card feed-card" },
         h("div", { class: "card-head" }, h("h2", null, "Live activity"), feedControls()),
         h("div", { class: "now-strip" }, h("span", null, "Active now"),
           active.length ? active.map(function (i) {
@@ -486,28 +498,28 @@
     });
     return [
       pageHead("System", "What Erinix watches, how it looks, and what is coming."),
-      h("section", { class: "card glass" }, h("h2", null, "Status"),
+      h("section", { class: "card" }, h("h2", null, "Status"),
         h("dl", { class: "tech" }, techRow("State", (STATES[o.state] || STATES.stopped).label), techRow("Mode", mode), o.since ? techRow("Watching since", when(o.since)) : null, techRow("Version", o.version))),
-      h("section", { class: "card glass" }, h("h2", null, "What Erinix watches"),
+      h("section", { class: "card" }, h("h2", null, "What Erinix watches"),
         rows.length ? h("table", null, h("thead", null, h("tr", null, h("th", null, "Source"), h("th", null, "Status"), h("th", null, "Details"))), h("tbody", null, rows))
           : h("p", { class: "empty" }, "No sources are configured yet."),
         o.blind_spots.length ? h("ul", { class: "plain" }, o.blind_spots.map(function (b) { return h("li", null, h("span", { class: "warn" }, "▲ "), "Blind spot: " + b); })) : null),
-      h("section", { class: "card glass" }, h("h2", null, "Last 24 hours"), h("div", { id: "spark-holder", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity)),
+      h("section", { class: "card" }, h("h2", null, "Last 24 hours"), h("div", { id: "spark-holder", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity)),
         h("p", { class: "facts" }, h("span", null, h("strong", { "data-live": "events_24h" }, fmt(o.events_24h)), " events checked"),
           h("span", null, h("strong", { "data-live": "alerts_24h" }, fmt(o.alerts_24h)), " alerts raised"))),
-      h("section", { class: "card glass" }, h("h2", null, "Appearance"),
-        h("div", { class: "palettes", role: "group", "aria-label": "Colour palette" }, (o.palettes || []).map(function (p) {
-          return h("button", { class: "pal", type: "button", "data-palette": p.name, "aria-pressed": o.palette === p.name ? "true" : "false", onclick: function () { choosePalette(p.name); } },
+      h("section", { class: "card" }, h("h2", null, "Appearance"),
+        h("div", { class: "palettes", role: "group", "aria-label": "Appearance" }, (o.themes || []).map(function (p) {
+          return h("button", { class: "pal", type: "button", "data-theme": p.name, "aria-pressed": o.theme === p.name ? "true" : "false", onclick: function () { chooseTheme(p.name); } },
             h("span", { class: "swatches" }, (p.swatch || []).map(swatch)), h("strong", null, p.label), h("span", { class: "blurb" }, p.blurb));
         }))),
-      h("section", { class: "card glass" }, h("h2", null, "Assessment"),
+      h("section", { class: "card" }, h("h2", null, "Assessment"),
         h("div", { class: "soon" }, h("span", { class: "tag" }, "Coming soon"), h("span", null, "A vulnerability and risk assessment of this machine will live here."))),
     ];
   }
 
   function viewLocked() {
     const why = state.loginError ? (LOGIN_MESSAGES[state.loginError] || "The sign-in did not work.") : null;
-    return h("section", { class: "card glass lock" }, h("img", { class: "lock-hog", src: "/static/hedgehog.svg", alt: "" }), h("h1", null, "Open Erinix from your terminal"),
+    return h("section", { class: "card lock" }, h("img", { class: "lock-hog", src: "/static/hedgehog.svg", alt: "" }), h("h1", null, "Open Erinix from your terminal"),
       why ? h("p", { class: "warn", role: "alert" }, why) : null,
       h("p", null, "This page needs a private sign-in link. Run:"), h("p", null, h("code", null, "erinix ui")),
       h("p", { class: "empty" }, "The link works once and expires after two minutes."));
@@ -530,7 +542,7 @@
     }
     if (!o) {
       pill.className = "pill state-stopped"; pill.textContent = state.error ? "Offline" : "Connecting…"; banner.hidden = true; count.hidden = true;
-      app.replaceChildren(h("section", { class: "card glass" }, h("p", { class: "empty" }, state.error || "Connecting…")));
+      app.replaceChildren(h("section", { class: "card" }, h("p", { class: "empty" }, state.error || "Connecting…")));
       return;
     }
     const st = STATES[o.state] || STATES.stopped;
@@ -541,10 +553,10 @@
     const open = o.incidents ? o.incidents.open : 0;
     count.hidden = !open;
     count.textContent = String(open);
-    applyPalette(o.palette);
+    applyTheme(o.theme);
     const body = view === "live" ? viewLive(o) : view === "incidents" ? viewIncidents(o) : view === "system" ? viewSystem(o) : viewHome(o);
     const y = window.scrollY, same = state.renderedView === view;
-    app.replaceChildren.apply(app, [state.error ? h("div", { class: "card glass", role: "alert" }, state.error) : null].concat(body).filter(Boolean));
+    app.replaceChildren.apply(app, [state.error ? h("div", { class: "card", role: "alert" }, state.error) : null].concat(body).filter(Boolean));
     if (same && y) window.scrollTo(0, y);                       // a redraw never throws you back to the top
     state.renderedView = view;
   }

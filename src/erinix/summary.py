@@ -119,7 +119,7 @@ def build_overview(store: Store, *, now: float | None = None) -> dict:
 
     attention = [humanize_full(store, r) for r in store.list_alerts("open", limit=ATTENTION_LIMIT)]
     incidents = build_incidents(store, "open")
-    chosen = store.get_meta("palette", None)
+    chosen = store.get_meta("theme", None)
     activity = store.activity(now=now)
     return {
         "state": state, "headline": headline, "demo": demo, "mode": mode or "none",
@@ -130,7 +130,7 @@ def build_overview(store: Store, *, now: float | None = None) -> dict:
         "activity": activity, "sources": [s for s in sources if isinstance(s, dict)],
         "blind_spots": blind, "version": __version__,
         "incidents": {"open": len(incidents), "top": incidents[:3]},
-        "palette": chosen if palettes.is_known(chosen) else palettes.DEFAULT, "palettes": palettes.info(),
+        "theme": chosen if palettes.is_known(chosen) else palettes.DEFAULT, "themes": palettes.info(),
     }
 
 
@@ -146,7 +146,7 @@ def empty_overview() -> dict:
             "heartbeat_age": None, "open": {"total": 0, "low": 0, "medium": 0, "high": 0, "critical": 0},
             "dismissed": 0, "attention": [], "events_24h": 0, "alerts_24h": 0, "activity": [], "sources": [],
             "blind_spots": ["Nothing is being watched yet. Start the agent, or load demo data with: erinix demo"],
-            "version": __version__, "incidents": {"open": 0, "top": []}, "palette": "cacao", "palettes": _palette_info()}
+            "version": __version__, "incidents": {"open": 0, "top": []}, "theme": "auto", "themes": _palette_info()}
 
 
 def ago(epoch: float, now: float | None = None) -> str:
