@@ -4,6 +4,8 @@ schema = 1
 # same remote address.
 [[chain]]
 id = "ssh-bruteforce-success"
+tag = "Password guessing"
+area = "logins"
 title = "Someone is guessing SSH passwords from {remote}"
 why = "Many failed logins in a short time, followed by one that worked, usually mean a password was guessed."
 next = [

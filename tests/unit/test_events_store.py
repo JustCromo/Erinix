@@ -187,3 +187,25 @@ def test_step_labels_roundtrip(tmp_path):
                              process=None, anchor=None, remote_addr=ipaddress.ip_address("10.0.0.1"), mono_ns=0, wall_ns=int(NOW * 1e9),
                              step_labels=("First thing", "Second thing")))
         assert s.get_alert("a" * 32)["step_labels"] == ["First thing", "Second thing"]
+
+
+def test_a_store_from_before_incidents_is_upgraded(tmp_path):
+    """Version 2 had no tag and no area on alerts."""
+    path = tmp_path / "state" / "erinix.db"
+    with Store(path) as s:
+        add(s, 2)
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE alerts DROP COLUMN tag")
+    conn.execute("ALTER TABLE alerts DROP COLUMN area")
+    conn.execute("INSERT INTO alerts (alert_id, rule_id, kind, title, why, next_steps, description, severity, response, steps_done, steps_total, step_id, "
+                 "complete, mitre, remote, anchor_pid, revision, evidence, detail, first_seen, updated, status, step_labels) VALUES "
+                 "('old','r','indicator','T','W','[]','D','high','report_only',1,1,'s',1,'[]','1.2.3.4',NULL,1,'[]','',1.0,2.0,'open','[]')")
+    conn.execute("PRAGMA user_version=2")
+    conn.commit()
+    conn.close()
+    with Store(path, readonly=True) as r:
+        row = r.get_alert("old")
+        assert row["tag"] == "" and row["area"] == "" and row["title"] == "T" and len(r.list_events()) == 2
+    from erinix.incidents import build_incidents
+    with Store(path, readonly=True) as r:
+        assert build_incidents(r)[0]["who"] == "1.2.3.4"

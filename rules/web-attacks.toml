@@ -6,6 +6,8 @@ schema = 1
 
 [[indicator]]
 id = "web-sqli-attempt"
+tag = "SQL injection"
+area = "website"
 title = "Someone tried to attack the database through the website from {remote}"
 why = "The request contains database commands where normal visitors send plain text. Attackers use this (SQL injection) to read or change data."
 next = [
@@ -26,6 +28,8 @@ contains = [
 
 [[indicator]]
 id = "web-path-traversal"
+tag = "File access attempt"
+area = "website"
 title = "Someone tried to read private files through the website from {remote}"
 why = "The request uses tricks like ../ to leave the website's folder and reach system files."
 next = [
@@ -43,6 +47,8 @@ contains = ["../", "..\\", "/etc/passwd", "/etc/shadow", "/proc/self/", "c:\\win
 
 [[indicator]]
 id = "web-command-injection"
+tag = "Command injection"
+area = "website"
 title = "Someone tried to run commands on the server through the website from {remote}"
 why = "The request contains shell syntax. If the app passes it to a system command, the attacker could run programs on your machine."
 next = [
@@ -60,6 +66,8 @@ contains = ["; cat ", ";cat ", "| cat ", "|cat ", "$(id", "$(cat", "$(curl", "$(
 
 [[indicator]]
 id = "web-template-or-script-injection"
+tag = "Script injection"
+area = "website"
 title = "Someone sent script or template code to the website from {remote}"
 why = "The request carries code meant to run in a visitor's browser or inside the server's page templates."
 next = [
@@ -77,6 +85,8 @@ contains = ["<script", "javascript:", "onerror=", "onload=", "{{7*7}}", "{{confi
 
 [[indicator]]
 id = "web-attack-tool-user-agent"
+tag = "Attack tool"
+area = "website"
 title = "An attack tool is scanning the website from {remote}"
 why = "The visitor identifies itself as a security scanner. That is normal in practice battles and common in real probing."
 next = [

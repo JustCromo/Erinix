@@ -79,14 +79,20 @@ def detect_unicode(stream: TextIO | None = None, env: Mapping[str, str] | None =
 
 
 class Theme:
-    def __init__(self, color_level: int = 0, unicode: bool = True, width: int | None = None) -> None:
+    def __init__(self, color_level: int = 0, unicode: bool = True, width: int | None = None, palette: str | None = None) -> None:
+        if palette:
+            from erinix.palettes import console_roles
+
+            self._roles = console_roles(palette)
+        else:
+            self._roles = PALETTE
         self.color_level = color_level
         self.unicode = unicode
         self._width = width
 
     @classmethod
-    def from_stream(cls, stream: TextIO | None = None, env: Mapping[str, str] | None = None) -> "Theme":
-        return cls(detect_color_level(stream, env), detect_unicode(stream, env))
+    def from_stream(cls, stream: TextIO | None = None, env: Mapping[str, str] | None = None, palette: str | None = None) -> "Theme":
+        return cls(detect_color_level(stream, env), detect_unicode(stream, env), palette=palette)
 
     @property
     def width(self) -> int:
@@ -114,7 +120,7 @@ class Theme:
                 params.append(self._rgb_param(fg, False))
             if bg is not None:
                 params.append(self._rgb_param(bg, True))
-        spec = PALETTE.get(role) if role and fg is None else None
+        spec = self._roles.get(role) if role and fg is None else None
         if spec is not None:
             rgb, idx, sgr = spec
             if self.color_level >= 3:

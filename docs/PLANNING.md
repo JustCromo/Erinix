@@ -273,6 +273,9 @@ Development order: event model and process tree (done), rules (done), correlatio
 | 2026-11-14 | The store keeps recent events (bounded ring, longer for events tied to an alert); every event is recorded and linked to the attack step it belongs to | The live view and "what happened, step by step" need the events, not only the last alert state |
 | 2026-11-14 | The dashboard polls (overview each second, events twice a second) instead of using a push channel | Simple and robust with the standard library; measured delay about 0.3 s. A push channel can replace it later |
 | 2026-11-14 | Chain steps carry a plain-language `label`; web rules can exclude ordinary files with `path_not` | Readable timelines; browsers and bots always ask for favicon.ico and robots.txt, which must not count as probing |
+| 2026-11-15 | Alerts are grouped into incidents by who is behind them (an address, or "this machine"); rules carry a `tag` (kind of attack) and an `area` | One attacker doing six things is one story, not six alerts; people can also filter by kind of attack |
+| 2026-11-15 | Dashboard pages: Home, Incidents, Live, System, with a left menu; Home answers "is everything OK?" in one sentence | Readable by people who do not know security; no information repeated |
+| 2026-11-15 | One shared colour palette setting for the dashboard and the console (seven palettes, contrast checked by tests) | "Cozy" must never mean tiring to read |
 
 ### Still to decide or reconfirm
 

@@ -50,10 +50,19 @@ Inside the console, type the same commands without `erinix`.
 ## The dashboard
 
 `erinix ui` starts a small local web server (127.0.0.1 only) and opens your browser with a private
-sign-in link that works once. The dashboard shows the same facts as the console: a plain-language
-summary, the alerts with "See more" for technical details, and what Erinix is watching (and what it
-cannot see). The **Live** page updates by itself, about twice a second: the events as they happen on the left, and on
-the right every attack in progress with its steps shown as done, happening now or still to come. Stop it with `erinix stop`. The look is a forest night with the hedgehog's orange and glass panels; for a warmer, brown-based palette change `data-palette="bosco"` to `"sottobosco"` in `src/erinix/web/static/index.html`. If the link says it was already used, run `erinix ui` again for a new one.
+sign-in link that works once (if it says the link was already used, run `erinix ui` again). Stop it with `erinix stop`.
+A menu on the left leads to four pages:
+
+- **Home**: the answer to "is everything OK?" in one plain sentence, the few incidents that need you,
+  and a small live strip.
+- **Incidents**: everything suspicious, grouped by who is behind it (one attacker, one incident, with every
+  attack inside). Filter by type of attack. Open one to see what to do first, then what happened in order.
+- **Live**: every event as it happens (about twice a second), attack events highlighted; the incidents that are
+  active right now sit above the stream. Each attack shows its steps as done, happening now or still to come.
+- **System**: what Erinix watches (and what it cannot see), a chart of the last 24 hours, and the colours.
+
+Colours: seven cozy palettes (six dark, one light). Pick one in **System > Appearance** or with
+`erinix palette <name>`; the choice is shared, so the console follows it too.
 
 If the box-drawing symbols look misaligned in your terminal font, run with plain characters: `ERINIX_ASCII=1 erinix`.
 

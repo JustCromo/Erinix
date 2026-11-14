@@ -123,6 +123,8 @@ class Chain:
     title: str = ""                       # plain-language headline ({remote} is replaced)
     why: str = ""                         # why it matters, in plain language
     next_steps: tuple[str, ...] = ()      # what to do, in plain language
+    tag: str = ""                         # the kind of attack, in two or three words (groups incidents)
+    area: str = ""                        # what it touches: website, logins or this machine
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +140,8 @@ class Indicator:
     title: str = ""
     why: str = ""
     next_steps: tuple[str, ...] = ()
+    tag: str = ""
+    area: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +274,8 @@ def _common(raw: Mapping[str, Any], where: str) -> tuple[str, tuple[str, ...]]:
     return description, tuple(dict.fromkeys(mitre_raw))
 
 
-MAX_TITLE, MAX_WHY, MAX_NEXT_ITEMS, MAX_NEXT, MAX_LABEL = 120, 400, 6, 200, 100
+MAX_TITLE, MAX_WHY, MAX_NEXT_ITEMS, MAX_NEXT, MAX_LABEL, MAX_TAG = 120, 400, 6, 200, 100, 32
+AREAS = ("website", "logins", "this machine")
 
 
 def _plain_text(value: object, where: str, limit: int) -> str:
@@ -281,8 +286,14 @@ def _plain_text(value: object, where: str, limit: int) -> str:
     return text
 
 
-def _human(raw: Mapping[str, Any], where: str) -> tuple[str, str, tuple[str, ...]]:
-    """Optional plain-language texts: title, why, next (a list of suggested steps)."""
+def _human(raw: Mapping[str, Any], where: str) -> tuple[str, str, tuple[str, ...], str, str]:
+    """Optional plain-language texts: title, why, next (suggested steps), tag (kind of attack), area (what it touches)."""
+    tag = _text(raw["tag"], f"{where}, tag", MAX_TAG) if "tag" in raw else ""
+    area = ""
+    if "area" in raw:
+        area = raw["area"]
+        if area not in AREAS:
+            raise RuleError(f"{where}: 'area' must be one of: {', '.join(AREAS)}")
     title = _plain_text(raw["title"], f"{where}, title", MAX_TITLE) if "title" in raw else ""
     why = _plain_text(raw["why"], f"{where}, why", MAX_WHY) if "why" in raw else ""
     steps: tuple[str, ...] = ()
@@ -291,7 +302,7 @@ def _human(raw: Mapping[str, Any], where: str) -> tuple[str, str, tuple[str, ...
         if not isinstance(value, list) or not 1 <= len(value) <= MAX_NEXT_ITEMS:
             raise RuleError(f"{where}: 'next' must be a list of 1-{MAX_NEXT_ITEMS} short sentences")
         steps = tuple(_plain_text(item, f"{where}, next", MAX_NEXT) for item in value)
-    return title, why, steps
+    return title, why, steps, tag, area
 
 
 def _justification(raw: Mapping[str, Any], where: str, needed: bool) -> str:
@@ -337,9 +348,9 @@ def _parse_chain(raw: dict) -> Chain:
     rule_id = _ident(raw, "chain")
     where = f"chain {rule_id}"
     _check_keys(raw, {"id", "description", "mitre", "window_seconds", "link", "response",
-                      "justification", "step", "title", "why", "next"}, where)
+                      "justification", "step", "title", "why", "next", "tag", "area"}, where)
     description, mitre = _common(raw, where)
-    title, why, next_steps = _human(raw, where)
+    title, why, next_steps, tag, area = _human(raw, where)
     window = raw.get("window_seconds")
     if isinstance(window, bool) or not isinstance(window, int) or not MIN_WINDOW <= window <= MAX_WINDOW:
         raise RuleError(f"{where}: 'window_seconds' must be an integer from {MIN_WINDOW} to {MAX_WINDOW}")
@@ -356,23 +367,23 @@ def _parse_chain(raw: dict) -> Chain:
     needs_just = default is Response.AUTO or any(s.response is Response.AUTO for s in steps)
     justification = _justification(raw, where, needs_just)
     return Chain(rule_id, description, mitre, window, link, default, justification, steps,
-                 title, why, next_steps)
+                 title, why, next_steps, tag, area)
 
 
 def _parse_indicator(raw: dict) -> Indicator:
     rule_id = _ident(raw, "indicator")
     where = f"indicator {rule_id}"
     _check_keys(raw, {"id", "description", "mitre", "event", "severity", "response",
-                      "justification", "match", "title", "why", "next"}, where)
+                      "justification", "match", "title", "why", "next", "tag", "area"}, where)
     description, mitre = _common(raw, where)
-    title, why, next_steps = _human(raw, where)
+    title, why, next_steps, tag, area = _human(raw, where)
     event = _enum(EventType, raw.get("event"), where, "event")
     severity = _enum(Severity, raw.get("severity"), where, "severity")
     response = Response.REPORT_ONLY if "response" not in raw else _enum(Response, raw["response"], where, "response")
     match = _parse_match(event, raw.get("match"), where)
     justification = _justification(raw, where, response is Response.AUTO)
     return Indicator(rule_id, description, mitre, event, severity, response, justification, match,
-                     title, why, next_steps)
+                     title, why, next_steps, tag, area)
 
 
 # ------------------------------------------------------- file security
