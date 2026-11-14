@@ -134,6 +134,42 @@ def build_overview(store: Store, *, now: float | None = None) -> dict:
     }
 
 
+_INVENTORY_CAPS = {"processes": 400, "listening": 300, "connections": 300}
+
+
+def _clean(value: object, depth: int = 0) -> object:
+    """Numbers, booleans and short text only: whatever is stored is shown, never trusted."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:400]
+    if isinstance(value, dict) and depth < 3:
+        return {str(k)[:40]: _clean(v, depth + 1) for k, v in list(value.items())[:40]}
+    if isinstance(value, list) and depth < 3:
+        return [_clean(v, depth + 1) for v in value[:400]]
+    return None
+
+
+def empty_inventory() -> dict:
+    return {"available": False, "host": {}, "processes": [], "process_total": 0, "listening": [], "connections": [], "at": None}
+
+
+def build_inventory(store: Store) -> dict:
+    """What the agent sees on the machine right now: host, programs, listening ports, connections."""
+    raw = store.get_meta("inventory", None)
+    if not isinstance(raw, dict):
+        return empty_inventory()
+    out: dict = {"available": True}
+    for key in ("host", "at", "process_total"):
+        out[key] = _clean(raw.get(key, {} if key == "host" else None))
+    for key, cap in _INVENTORY_CAPS.items():
+        rows = raw.get(key, [])
+        out[key] = [_clean(r) for r in rows[:cap] if isinstance(r, dict)] if isinstance(rows, list) else []
+    return out
+
+
 def _palette_info() -> list[dict]:
     from erinix import palettes
 

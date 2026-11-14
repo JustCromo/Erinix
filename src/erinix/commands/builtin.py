@@ -255,6 +255,7 @@ def build_registry() -> Registry:
         ("reopen", "Bring a dismissed alert back", "reopen <n>", "Status", sc.cmd_reopen, ()),
         ("sources", "What Erinix watches, and its blind spots", "sources [--json]", "Status", sc.cmd_sources, ("--json",)),
         ("live", "Follow events as they happen", "live [--suspicious]", "Status", sc.cmd_live, ("--suspicious", "--for")),
+        ("watch", "Watch this machine for real", "watch [--config PATH] [--for SECONDS]", "Status", sc.cmd_watch, ("--config", "--for")),
         ("ui", "Open the web dashboard", "ui [--no-browser] [--port N]", "Dashboard", sc.cmd_ui, ("--no-browser", "--port")),
         ("serve", "Run the dashboard in this terminal", "serve [--port N]", "Dashboard", sc.cmd_serve, ("--port",)),
         ("stop", "Stop the dashboard", "stop", "Dashboard", sc.cmd_stop, ()),

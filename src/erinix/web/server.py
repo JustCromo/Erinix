@@ -32,7 +32,7 @@ from erinix import __version__, assets, palettes
 from erinix.incidents import build_incidents, incident_detail, incident_id, set_incident_status
 from erinix.history import state_dir
 from erinix.store import STATUSES, Store, StoreError, default_db_path
-from erinix.summary import build_overview, empty_overview, humanize_full
+from erinix.summary import build_inventory, build_overview, empty_inventory, empty_overview, humanize_full
 
 DEFAULT_PORT = 8421
 SESSION_TTL = 8 * 3600
@@ -292,6 +292,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if store is None:
                     return self._json(200, empty_overview())
                 return self._json(200, build_overview(store))
+            if path == "/api/inventory":
+                return self._json(200, build_inventory(store) if store is not None else empty_inventory())
             if path == "/api/alerts":
                 status = (query.get("status") or ["open"])[0]
                 if status not in (*STATUSES, "all"):

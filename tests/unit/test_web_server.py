@@ -575,3 +575,17 @@ def test_events_know_their_attack_type_and_incident(dash):
     assert flagged and all(e["tag"] and e["incident"] in incidents for e in flagged)
     plain = [e for e in events if not e["alert"]]
     assert plain and all(e["incident"] is None and e["tag"] == "" for e in plain)
+
+
+def test_inventory_endpoint_is_cleaned_and_needs_a_session(dash):
+    assert call(dash, "GET", "/api/inventory")[0] == 401
+    with Store(dash.db_path) as st:
+        st.set_meta("inventory", {"host": {"name": "pi", "x": "y" * 900}, "processes": [{"pid": 1, "name": "init", "evil": ["a"] * 1000}] * 500,
+                                  "listening": "not a list", "connections": [], "at": 1.0, "process_total": 500})
+        token = st.create_login_token()
+    _, h, _ = login(dash, token)
+    cookie = h["set-cookie"].split(";")[0]
+    status, _, body = call(dash, "GET", "/api/inventory", headers={"Cookie": cookie})
+    data = json.loads(body)
+    assert status == 200 and data["available"] and len(data["processes"]) == 400 and data["listening"] == []
+    assert len(data["host"]["x"]) == 400 and len(data["processes"][0]["evil"]) <= 400

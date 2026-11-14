@@ -7,7 +7,7 @@
   const POLL_MS = 1000;           // overview and incidents: once a second
   const FEED_MS = 500;            // the live stream of events: twice a second
   const FEED_KEEP = 300;
-  const FEED_SHOWN = { home: 6, live: 150 };
+  const FEED_SHOWN = { home: 150, live: 150 };
   const SEVERITY = {
     low: { label: "Low", icon: "●" },
     medium: { label: "Medium", icon: "▲" },
@@ -30,12 +30,13 @@
     expired: "This sign-in link has expired.",
     unavailable: "Erinix could not read its data. Try: erinix doctor",
   };
-  const PAGE_NAMES = { home: "Home", incidents: "Incidents", live: "Live", system: "System" };
+  const PAGE_NAMES = { home: "Cockpit", incidents: "Incidents", live: "Live", system: "System" };
 
   const state = {
     overview: null, incidents: [], detail: null, selected: null, filter: "open", tag: null,
     csrf: null, version: "", locked: false, error: null, open: {}, lastKey: "", loginError: "", renderedView: "",
-    feed: { events: [], lastId: 0, paused: false, pausedAt: null, queued: 0, only: false, loaded: false },
+    feed: { events: [], lastId: 0, paused: false, pausedAt: null, queued: 0, only: false, loaded: false, q: "" },
+    inv: null, q: {}, f: {}, openIncidents: [],
   };
   const app = document.getElementById("app");
 
@@ -71,6 +72,20 @@
   function sev(name) { return SEVERITY[name] ? name : "low"; }
   function plural(n, one, many) { return n === 1 ? one : many; }
   function fmt(n) { return Number(n || 0).toLocaleString(); }
+  // every word typed must appear somewhere in the text: "ssh root" finds rows that mention both
+  function matches(text, query) {
+    const words = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return true;
+    const low = String(text).toLowerCase();
+    return words.every(function (w) { return low.indexOf(w) >= 0; });
+  }
+  function searchBox(placeholder, value, onInput) {
+    const input = h("input", { type: "search", class: "search", placeholder: placeholder, "aria-label": placeholder, autocomplete: "off", spellcheck: "false", maxlength: "80" });
+    input.value = value || "";
+    input.addEventListener("input", function () { onInput(input.value.slice(0, 80)); });
+    return input;
+  }
+  function userName(uid) { return uid === 0 ? "root" : "user " + uid; }
   function safeId(id) { return typeof id === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(id) ? id : null; }
   function timeAgo(epoch) {
     const s = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
@@ -135,17 +150,22 @@
           try { detail = await request("GET", "/api/incidents/" + encodeURIComponent(selected)); }
           catch (err) { if (err.message === "locked") throw err; detail = null; }
         }
-      } else if (r.view === "live") {
+      } else if (r.view === "live" || r.view === "home") {
         incidents = (await request("GET", "/api/incidents?status=open")).incidents;
+      }
+      if (r.view === "home" || r.view === "system") {
+        try { state.inv = await request("GET", "/api/inventory"); }
+        catch (err) { if (err.message === "locked") throw err; }
       }
       // Counters and the chart change all the time: they are updated in place, never by redrawing the page.
       const stable = Object.assign({}, overview);
       ["heartbeat_age", "events_24h", "alerts_24h", "activity"].forEach(function (k) { delete stable[k]; });
       const key = JSON.stringify([stable, incidents, detail, state.filter, state.tag, r, selected,
-        r.view === "live" ? activeNow(incidents).map(function (i) { return i.id; }) : null]);
+        r.view === "live" ? activeNow(incidents).map(function (i) { return i.id; }) : null, r.view === "home" ? [incidents, overview.sources] : null]);
       state.overview = overview; state.incidents = incidents; state.detail = detail; state.selected = selected; state.error = null;
       if (key !== state.lastKey) { state.lastKey = key; render(); }
       updateLive(overview);
+      updateInventory();
     } catch (err) {
       state.error = err.message === "locked" ? null : "Cannot reach Erinix. Is it running? Try: erinix ui";
       state.lastKey = "";
@@ -276,8 +296,9 @@
   // --------------------------------------------------------- the live stream
   function visibleEvents() {
     const f = state.feed;
-    return f.events.filter(function (e) { return (!f.only || e.alert) && (f.pausedAt === null || e.id <= f.pausedAt); });
+    return f.events.filter(function (e) { return (!f.only || e.alert) && (f.pausedAt === null || e.id <= f.pausedAt) && matches(eventText(e), f.q); });
   }
+  function eventText(e) { return [e.label, e.summary, e.remote, e.tag].join(" "); }
   function feedRow(e, entering) {
     const id = safeId(e.incident);
     const tag = e.alert ? (e.tag ? (id ? h("a", { class: "tag", href: "#/incidents/" + id }, e.tag) : h("span", { class: "tag" }, e.tag)) : h("span", { class: "tag" }, "Part of an attack")) : null;
@@ -290,7 +311,7 @@
   function fillFeed(ul, limit) {
     const rows = visibleEvents().slice(-limit).reverse();
     ul.replaceChildren.apply(ul, rows.length ? rows.map(function (e) { return feedRow(e, false); })
-      : [h("li", { class: "ev-empty" }, state.feed.only ? "No suspicious events yet." : "Waiting for events…")]);
+      : [h("li", { class: "ev-empty" }, state.feed.q ? "No event matches your search." : state.feed.only ? "No suspicious events yet." : "Waiting for events…")]);
   }
   function refillFeed() {
     const ul = document.getElementById("feed");
@@ -300,7 +321,7 @@
     const ul = document.getElementById("feed");
     if (!ul) return;
     const limit = Number(ul.getAttribute("data-limit")) || 100;
-    const shown = fresh.filter(function (e) { return !state.feed.only || e.alert; });
+    const shown = fresh.filter(function (e) { return (!state.feed.only || e.alert) && matches(eventText(e), state.feed.q); });
     if (!shown.length) return;
     const empty = ul.querySelector(".ev-empty");
     if (empty) empty.remove();
@@ -325,11 +346,12 @@
     const f = state.feed;
     return h("div", { class: "feed-controls" },
       h("span", { class: "live-pill" }, h("span", { class: "live-dot", "aria-hidden": "true" }), "Live"),
+      searchBox("Search events…", f.q, function (v) { state.feed.q = v; refillFeed(); }),
       h("button", { class: "btn small", type: "button", "data-action": "pause", "aria-pressed": f.paused ? "true" : "false", onclick: togglePause }, f.paused ? "Resume" : "Pause"),
       h("button", { class: "btn small", type: "button", "data-action": "only", "aria-pressed": f.only ? "true" : "false", onclick: toggleOnly }, "Only suspicious"));
   }
   function feedList(limit) {
-    const ul = h("ul", { id: "feed", class: "feed", "data-limit": limit });
+    const ul = h("ul", { id: "feed", class: "feed scroll", "data-limit": limit });
     fillFeed(ul, limit);
     return ul;
   }
@@ -414,61 +436,184 @@
   }
 
   // ------------------------------------------------------------------- views
+  // ------------------------------------------------- cockpit panels (fixed size, own scroll, own search)
+  function sourceRow(x) {
+    const ok = x.state === "ok";
+    return h("li", { class: "row src" + (ok ? "" : " bad") },
+      h("span", { class: ok ? "ok" : "warn", "aria-hidden": "true" }, ok ? "✔" : "▲"),
+      h("div", { class: "row-main" }, h("strong", null, x.name), h("span", { class: "row-sub" }, x.detail || (ok ? "Watching" : "Blind"))),
+      typeof x.lines === "number" ? h("span", { class: "row-aside", title: "lines read · understood · ignored" },
+        fmt(x.lines) + " read · " + fmt(x.understood) + " understood" + (x.ignored ? " · " + fmt(x.ignored) + " ignored" : "")) : null);
+  }
+  function programRow(p) {
+    return h("li", { class: "row prog" }, h("span", { class: "row-key mono" }, String(p.pid)),
+      h("div", { class: "row-main" }, h("strong", null, p.name), h("span", { class: "row-sub mono" }, p.command)),
+      h("span", { class: "row-aside" }, userName(p.uid)));
+  }
+  function portRow(p) {
+    return h("li", { class: "row port" + (p.exposed ? " exposed" : "") }, h("span", { class: "row-key mono" }, String(p.port)),
+      h("div", { class: "row-main" }, h("strong", null, p.program || "unknown program"), h("span", { class: "row-sub mono" }, p.local)),
+      h("span", { class: "tag" + (p.exposed ? " flag" : "") }, p.exposed ? "Open to network" : "This machine only"));
+  }
+  function connRow(c) {
+    return h("li", { class: "row conn" }, h("span", { class: "row-key mono" }, c.pid ? String(c.pid) : "?"),
+      h("div", { class: "row-main" }, h("strong", null, c.program || "unknown program"), h("span", { class: "row-sub mono" }, c.local + " → " + c.remote)),
+      h("span", { class: "tag" + (c.external ? " flag" : "") }, c.external ? "Internet" : "Local network"));
+  }
+  const PANELS = {
+    incidents: { title: "Incidents", search: "Search incidents…", empty: "Nothing needs your attention.",
+      rows: function () { return state.incidents.filter(function (i) { return i.status === "open"; }); },
+      text: function (i) { return [i.who, i.headline, (i.tags || []).join(" ")].join(" "); }, row: function (i) { return incidentRow(i, "panel"); } },
+    sources: { title: "Sources", search: "Search sources…", toggle: "Problems only", empty: "No sources are configured yet. Run: erinix watch",
+      rows: function () { return state.overview ? state.overview.sources : []; },
+      keep: function (x) { return x.state !== "ok"; }, text: function (x) { return x.name + " " + (x.detail || ""); }, row: sourceRow },
+    programs: { title: "Programs", search: "Search programs…", empty: "Waiting for the agent. Run: erinix watch",
+      rows: function () { return state.inv ? state.inv.processes : []; },
+      text: function (p) { return [p.pid, p.name, p.command, userName(p.uid)].join(" "); }, row: programRow },
+    ports: { title: "Listening ports", search: "Search ports…", toggle: "Open to network", empty: "Waiting for the agent. Run: erinix watch",
+      rows: function () { return state.inv ? state.inv.listening : []; },
+      keep: function (p) { return p.exposed; }, text: function (p) { return [p.port, p.program, p.local].join(" "); }, row: portRow },
+    connections: { title: "Connections", search: "Search connections…", toggle: "Internet only", empty: "No connection seen yet.",
+      rows: function () { return state.inv ? state.inv.connections : []; },
+      keep: function (c) { return c.external; }, text: function (c) { return [c.program, c.local, c.remote, c.pid].join(" "); }, row: connRow },
+  };
+  function fillPanel(id) {
+    const spec = PANELS[id], body = document.getElementById("p-" + id);
+    if (!spec || !body) return;
+    const all = spec.rows(), q = state.q[id] || "", only = !!state.f[id];
+    const rows = all.filter(function (r) { return (!only || spec.keep(r)) && matches(spec.text(r), q); });
+    const count = document.querySelector('[data-count="' + id + '"]');
+    if (count) count.textContent = rows.length === all.length ? String(all.length) : rows.length + " / " + all.length;
+    const key = JSON.stringify([rows, q, only]);
+    if (body.getAttribute("data-k") === key) return;               // nothing changed: leave the scroll position alone
+    body.setAttribute("data-k", key);
+    body.replaceChildren.apply(body, rows.length ? [h("ul", { class: "rows" }, rows.map(spec.row))]
+      : [h("p", { class: "empty pad" }, all.length ? "Nothing matches." : spec.empty)]);
+  }
+  function panelHead(title, id, controls) {
+    return h("div", { class: "panel-head" }, h("h2", null, title), id ? h("span", { class: "panel-count", "data-count": id }, "") : null, controls);
+  }
+  function panel(id, cls) {
+    const spec = PANELS[id];
+    const controls = h("div", { class: "panel-tools" },
+      spec.toggle ? h("button", { class: "btn small", type: "button", "aria-pressed": state.f[id] ? "true" : "false", onclick: function (ev) {
+        state.f[id] = !state.f[id]; ev.currentTarget.setAttribute("aria-pressed", state.f[id] ? "true" : "false"); fillPanel(id); } }, spec.toggle) : null,
+      searchBox(spec.search, state.q[id], function (v) { state.q[id] = v; fillPanel(id); }));
+    const el = h("section", { class: "panel card " + (cls || ""), "aria-label": spec.title }, panelHead(spec.title, id, controls), h("div", { id: "p-" + id, class: "panel-body scroll" }));
+    return el;
+  }
+  function tile(label, value, attrs, tone) {
+    return h("div", { class: "tile" + (tone ? " " + tone : "") }, h("strong", attrs, value), h("span", null, label));
+  }
+  function machinePanel(o) {
+    const el = h("section", { class: "panel card", "aria-label": "This machine" }, panelHead("This machine"), h("div", { id: "p-machine", class: "panel-body scroll" }));
+    return el;
+  }
+  function fillMachine(o) {
+    const body = document.getElementById("p-machine");
+    if (!body) return;
+    const inv = state.inv || {}, host = inv.host || {};
+    const rows = [["Name", host.name], ["System", host.system], ["Hardware", host.machine], ["Agent runs as", host.user ? host.user + (host.root ? " (root: sees every user)" : " (sees only its own programs)") : null],
+      ["Mode", o.demo ? "Demo data (simulated)" : o.mode === "live" ? "Live monitoring" : "Not monitoring"], ["Watching since", o.since ? when(o.since) : null], ["Version", o.version]]
+      .filter(function (r) { return r[1]; });
+    const key = JSON.stringify(rows);
+    if (body.getAttribute("data-k") === key) return;
+    body.setAttribute("data-k", key);
+    body.replaceChildren(h("dl", { class: "tech flat" }, rows.map(function (r) { return techRow(r[0], r[1]); })));
+  }
+  function updateInventory() {
+    Object.keys(PANELS).forEach(fillPanel);
+    if (state.overview) fillMachine(state.overview);
+    const inv = state.inv;
+    document.querySelectorAll("[data-inv]").forEach(function (el) {
+      if (!inv) return;
+      const k = el.getAttribute("data-inv");
+      el.textContent = fmt(k === "process_total" ? inv.process_total : (inv[k] || []).length);
+    });
+  }
+
   function viewHome(o) {
     const top = (o.incidents && o.incidents.top) || [], n = o.incidents ? o.incidents.open : 0;
     const st = STATES[o.state] || STATES.stopped;
     const total = o.sources.length, watching = o.sources.filter(function (x) { return x.state === "ok"; }).length, blind = total - watching;
     let headline, lead;
-    if (o.state === "stopped") { headline = "Erinix is not watching"; lead = "Nothing is being checked right now. Start the agent, or load demo data to look around."; }
-    else if (!top.length) { headline = "Everything looks fine"; lead = "Nothing suspicious is happening." + (total ? " Erinix is watching " + watching + " of " + total + " sources." : ""); }
+    if (o.state === "stopped") { headline = "Erinix is not watching"; lead = "Nothing is being checked right now. Run  erinix watch  to start, or  erinix demo  to look around."; }
+    else if (!top.length) { headline = "All quiet"; lead = "Nothing suspicious is happening." + (total ? " Erinix is watching " + watching + " of " + total + " sources." : ""); }
     else { headline = top[0].headline; lead = top[0].summary; }
     const first = top.length ? safeId(top[0].id) : null;
     return [
       h("section", { class: "hero card state-" + (STATES[o.state] ? o.state : "stopped") },
         h("div", { class: "hero-body" },
           h("div", { class: "hero-icon", "aria-hidden": "true" }, iconEl(st.sprite)),
-          h("div", null, h("p", { class: "eyebrow" }, st.label), h("h1", null, headline), h("p", { class: "lead" }, lead),
-            h("div", { class: "hero-actions" },
-              first ? h("a", { class: "btn primary", href: "#/incidents/" + first }, "See what happened") : null,
-              h("a", { class: "btn", href: "#/live" }, "Watch live")))),
-        h("img", { class: "hero-hog", src: "/static/hedgehog.svg", alt: "" })),
-      h("section", { class: "card" }, h("h2", null, "What needs you"),
-        top.length ? h("div", { class: "stack" }, top.map(function (i) { return incidentRow(i, "home"); })) : h("p", { class: "empty" }, "Nothing needs your attention."),
-        n > top.length ? h("p", null, h("a", { href: "#/incidents" }, "See all " + n + " incidents")) : null),
-      h("section", { class: "card feed-card compact" },
-        h("div", { class: "card-head" }, h("h2", null, "Happening now"), h("a", { class: "more-link", href: "#/live" }, "Open the live view")),
-        feedList(FEED_SHOWN.home)),
-      h("p", { class: "facts" },
-        h("span", { class: blind ? "warn" : "ok" }, (blind ? "▲ " : "✔ ") + "Watching " + watching + " of " + total + " sources"),
-        h("span", null, h("strong", { "data-live": "events_24h" }, fmt(o.events_24h)), " events checked today"),
-        h("span", null, h("strong", { "data-live": "alerts_24h" }, fmt(o.alerts_24h)), " " + plural(o.alerts_24h, "alert", "alerts") + " raised"),
-        blind ? h("a", { href: "#/system" }, blind + " " + plural(blind, "blind spot", "blind spots")) : null),
+          h("div", { class: "hero-text" }, h("p", { class: "eyebrow" }, st.label), h("h1", null, headline), h("p", { class: "lead" }, lead),
+            first ? h("div", { class: "hero-actions" }, h("a", { class: "btn primary", href: "#/incidents/" + first }, "See what happened")) : null)),
+        h("div", { class: "tiles" },
+          tile("open incidents", fmt(n), null, n ? "hot" : ""),
+          tile("events today", fmt(o.events_24h), { "data-live": "events_24h" }),
+          tile("alerts today", fmt(o.alerts_24h), { "data-live": "alerts_24h" }),
+          tile("sources watching", watching + "/" + total, null, blind ? "cool" : ""),
+          tile("programs seen", state.inv ? fmt(state.inv.process_total) : "–", { "data-inv": "process_total" }),
+          tile("listening ports", state.inv ? fmt(state.inv.listening.length) : "–", { "data-inv": "listening" }))),
+      h("div", { class: "cockpit" },
+        panel("incidents", "c-incidents"),
+        h("section", { class: "panel card c-live", "aria-label": "Live activity" },
+          panelHead("Live activity", null, feedControls()), feedList(FEED_SHOWN.home)),
+        panel("sources", "c-sources"),
+        panel("ports", "c-ports"),
+        panel("connections", "c-conns"),
+        panel("programs", "c-progs"),
+        h("section", { class: "panel card c-chart", "aria-label": "Activity" }, panelHead("Last 24 hours"),
+          h("div", { id: "spark-holder", class: "panel-body", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity))),
+        machinePanel(o)),
     ];
   }
 
+  function incidentTypes() {
+    const counts = {};
+    state.incidents.forEach(function (i) { (i.tags || []).forEach(function (t) { counts[t] = (counts[t] || 0) + 1; }); });
+    return { counts: counts, names: Object.keys(counts).sort(function (a, b) { return a.localeCompare(b); }) };
+  }
+  // the list and the type filter are refilled where they are, so typing in a search box never loses its place
+  function fillIncidentList() {
+    const box = document.getElementById("inc-list");
+    if (!box) return;
+    const list = state.incidents.filter(function (i) {
+      return (!state.tag || (i.tags || []).indexOf(state.tag) >= 0) && matches([i.who, i.headline, (i.tags || []).join(" ")].join(" "), state.q.inc);
+    });
+    const count = document.querySelector('[data-count="inc"]');
+    if (count) count.textContent = list.length === state.incidents.length ? String(list.length) : list.length + " / " + state.incidents.length;
+    box.replaceChildren.apply(box, list.length ? list.map(function (i) { return incidentRow(i, "list"); })
+      : [h("p", { class: "empty pad" }, state.q.inc || state.tag ? "Nothing matches." : state.filter === "open" ? "Nothing needs your attention." : "No incidents here.")]);
+  }
+  function fillTypeChips() {
+    const box = document.getElementById("tag-chips");
+    if (!box) return;
+    const t = incidentTypes();
+    const shown = t.names.filter(function (n) { return matches(n, state.q.types); });
+    box.replaceChildren.apply(box, [h("button", { type: "button", "aria-pressed": state.tag === null ? "true" : "false", onclick: function () { state.tag = null; fillTypeChips(); fillIncidentList(); } }, "All types")]
+      .concat(shown.map(function (n) {
+        return h("button", { type: "button", "aria-pressed": state.tag === n ? "true" : "false", onclick: function () { state.tag = state.tag === n ? null : n; fillTypeChips(); fillIncidentList(); } }, n + " " + t.counts[n]);
+      })));
+  }
   function viewIncidents(o) {
     const r = route();
     const tabs = [["open", "Open"], ["closed", "Closed"], ["all", "All"]];
-    const counts = {};
-    state.incidents.forEach(function (i) { (i.tags || []).forEach(function (t) { counts[t] = (counts[t] || 0) + 1; }); });
-    const names = Object.keys(counts).sort(function (a, b) { return a.localeCompare(b); });
-    const list = state.incidents.filter(function (i) { return !state.tag || (i.tags || []).indexOf(state.tag) >= 0; });
+    const types = incidentTypes();
     const left = h("section", { class: "list-pane card" },
+      h("div", { class: "panel-head" }, h("h2", null, "Incidents"), h("span", { class: "panel-count", "data-count": "inc" }, "")),
       h("div", { class: "tabs", role: "group", "aria-label": "Filter incidents" }, tabs.map(function (t) {
         return h("button", { type: "button", "aria-pressed": state.filter === t[0] ? "true" : "false",
           onclick: function () { state.filter = t[0]; state.lastKey = ""; refresh(); } }, t[1]);
       })),
-      names.length ? h("div", { class: "chips", role: "group", "aria-label": "Filter by type of attack" },
-        h("button", { type: "button", "aria-pressed": state.tag === null ? "true" : "false", onclick: function () { state.tag = null; state.lastKey = ""; render(); } }, "All types"),
-        names.map(function (t) {
-          return h("button", { type: "button", "aria-pressed": state.tag === t ? "true" : "false", onclick: function () { state.tag = state.tag === t ? null : t; state.lastKey = ""; render(); } }, t + " " + counts[t]);
-        })) : null,
-      list.length ? h("div", { class: "stack" }, list.map(function (i) { return incidentRow(i, "list"); }))
-        : h("p", { class: "empty" }, state.filter === "open" ? "Nothing needs your attention." : "No incidents here."));
-    const right = h("div", { class: "detail-pane", id: "detail" },
+      searchBox("Search incidents…", state.q.inc, function (v) { state.q.inc = v; fillIncidentList(); }),
+      types.names.length ? h("div", { class: "type-filter" },
+        types.names.length > 6 ? searchBox("Search attack types…", state.q.types, function (v) { state.q.types = v; fillTypeChips(); }) : null,
+        h("div", { id: "tag-chips", class: "chips scroll", role: "group", "aria-label": "Filter by type of attack" })) : null,
+      h("div", { id: "inc-list", class: "stack inc-list scroll" }));
+    const right = h("div", { class: "detail-pane scroll", id: "detail" },
       state.detail ? incidentDetail(state.detail)
         : h("section", { class: "card" }, h("p", { class: "empty" }, r.id ? "This incident is not available any more." : "Pick an incident on the left to see what happened.")));
-    return [pageHead("Incidents", "Everything suspicious, grouped by who is behind it."), h("div", { class: "split" + (r.id ? " has-detail" : "") }, left, right)];
+    return [h("div", { class: "split" + (r.id ? " has-detail" : "") }, left, right)];
   }
 
   function viewLive(o) {
@@ -494,14 +639,14 @@
   function viewSystem(o) {
     const mode = o.demo ? "Demo data (simulated attacks)" : o.mode === "live" ? "Live monitoring" : "Not monitoring";
     const rows = o.sources.map(function (s) {
-      return h("tr", null, h("td", null, s.name), h("td", null, s.state === "ok" ? h("span", { class: "ok" }, "✔ Watching") : h("span", { class: "warn" }, "▲ Blind")), h("td", null, s.detail || ""));
+      return h("tr", null, h("td", null, s.name), h("td", null, s.state === "ok" ? h("span", { class: "ok" }, "✔ Watching") : h("span", { class: "warn" }, "▲ Blind")), h("td", null, s.detail || ""), h("td", { class: "num" }, typeof s.lines === "number" ? fmt(s.lines) + " read, " + fmt(s.understood) + " understood" : ""));
     });
     return [
       pageHead("System", "What Erinix watches, how it looks, and what is coming."),
       h("section", { class: "card" }, h("h2", null, "Status"),
         h("dl", { class: "tech" }, techRow("State", (STATES[o.state] || STATES.stopped).label), techRow("Mode", mode), o.since ? techRow("Watching since", when(o.since)) : null, techRow("Version", o.version))),
       h("section", { class: "card" }, h("h2", null, "What Erinix watches"),
-        rows.length ? h("table", null, h("thead", null, h("tr", null, h("th", null, "Source"), h("th", null, "Status"), h("th", null, "Details"))), h("tbody", null, rows))
+        rows.length ? h("table", null, h("thead", null, h("tr", null, h("th", null, "Source"), h("th", null, "Status"), h("th", null, "Details"), h("th", null, "Activity"))), h("tbody", null, rows))
           : h("p", { class: "empty" }, "No sources are configured yet."),
         o.blind_spots.length ? h("ul", { class: "plain" }, o.blind_spots.map(function (b) { return h("li", null, h("span", { class: "warn" }, "▲ "), "Blind spot: " + b); })) : null),
       h("section", { class: "card" }, h("h2", null, "Last 24 hours"), h("div", { id: "spark-holder", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity)),
@@ -556,9 +701,17 @@
     applyTheme(o.theme);
     const body = view === "live" ? viewLive(o) : view === "incidents" ? viewIncidents(o) : view === "system" ? viewSystem(o) : viewHome(o);
     const y = window.scrollY, same = state.renderedView === view;
+    const focus = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("search") ? document.activeElement : null;
+    const focusKey = focus ? focus.getAttribute("aria-label") : null, caret = focus ? focus.selectionStart : 0;
     app.replaceChildren.apply(app, [state.error ? h("div", { class: "card", role: "alert" }, state.error) : null].concat(body).filter(Boolean));
+    fillIncidentList(); fillTypeChips();
+    updateInventory();
     if (same && y) window.scrollTo(0, y);                       // a redraw never throws you back to the top
     state.renderedView = view;
+    if (focusKey) {
+      const again = Array.prototype.find.call(document.querySelectorAll("input.search"), function (el) { return el.getAttribute("aria-label") === focusKey; });
+      if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch (e) { /* not every input type allows it */ } }
+    }
   }
 
   function tick() {
