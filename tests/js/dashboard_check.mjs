@@ -65,6 +65,7 @@ async function run({ hash = "#/", data = {}, status = 200, reject = false, needs
       return ok({ incidents: live.incidents.filter(i => st === "all" || (st === "open" ? i.status === "open" : i.status === "closed")) });
     }
     if (path === "/api/inventory") return ok(live.inventory || INVENTORY);
+    if (path === "/api/assessment") return ok(live.assessment || ASSESSMENT);
     if (path === "/api/settings") { live.themePosted = JSON.parse(opts.body).theme; live.overview = { ...live.overview, theme: live.themePosted }; return ok({ ok: true }); }   // the server remembers it
     return ok({}, 404);
   };
@@ -72,6 +73,11 @@ async function run({ hash = "#/", data = {}, status = 200, reject = false, needs
   await sleep(wait);
   return { w, doc: w.document, calls, live, close: () => w.close() };
 }
+const ASSESSMENT = { at: now(), score: 62, verdict: "Needs attention", counts: { fail: 1, warn: 1, unknown: 1, info: 0, ok: 1, na: 0 }, full_view: false, checks: [
+  { id: "ssh.root_login", area: "Remote access", title: "Root cannot log in over SSH", severity: "high", state: "fail", detail: "SSH lets root log in directly.", fix: "Set PermitRootLogin to no." },
+  { id: "net.firewall", area: "Network", title: "A firewall is active", severity: "medium", state: "warn", detail: "No firewall found.", fix: "Enable ufw." },
+  { id: "system.mac", area: "System", title: "Programs are confined", severity: "low", state: "unknown", detail: "Cannot tell.", fix: "" },
+  { id: "accounts.uid0", area: "Accounts", title: "Only root has full power", severity: "high", state: "ok", detail: "Only root has full power.", fix: "" }] };
 const INVENTORY = { available: true, at: now(), host: { name: "pi", system: "Linux 6.8", machine: "aarch64", user: "ivan", root: false, version: "9.9.9" }, process_total: 3,
   processes: [{ pid: 10, ppid: 1, uid: 0, name: "sshd", command: "/usr/sbin/sshd -D" }, { pid: 22, ppid: 1, uid: 1000, name: "caddy", command: "caddy run" }, { pid: 31, ppid: 1, uid: 1000, name: "python3", command: "python3 app.py" }],
   listening: [{ local: "0.0.0.0:22", port: 22, pid: 10, program: "sshd", uid: 0, exposed: true }, { local: "127.0.0.1:8080", port: 8080, pid: 31, program: "python3", uid: 1000, exposed: false }],
@@ -98,7 +104,7 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
   checks.home_tiles_are_links = [...d.querySelectorAll("a.tile")].map(x => x.getAttribute("href")).join(" ") === "#/incidents #/live #/incidents #/sources #/programs #/network";
   checks.panels_scroll_themselves = ["incidents", "sources", "ports", "connections"].every(id => body(id).classList.contains("scroll"));
   checks.home_has_no_duplicate_counters = d.querySelectorAll(".stat").length === 0 && !text(t.w, ".hero").includes("open alerts");
-  checks.pill_and_nav = text(t.w, "#pill") === "✖ Needs you now" && text(t.w, "#nav-count") === "3" && !d.getElementById("nav-count").hidden && d.querySelectorAll("#nav a").length === 7;
+  checks.pill_and_nav = text(t.w, "#pill") === "✖ Needs you now" && text(t.w, "#nav-count") === "3" && !d.getElementById("nav-count").hidden && d.querySelectorAll("#nav a").length === 8;
   checks.nav_marks_the_page = d.querySelector('#nav a[data-view="home"]').getAttribute("aria-current") === "page" && d.title === "Erinix · Cockpit";
   checks.footer_version = text(t.w, "#version") === "v9.9.9";
   t.close();
@@ -258,7 +264,7 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
 {
   const t = await run({ hash: "#/system", wait: 400 });
   const d = t.doc;
-  checks.system_status = text(t.w, "#app").includes("Live monitoring") && text(t.w, "#app").includes("9.9.9") && text(t.w, "#app").includes("Coming soon") && text(t.w, "#sys-machine").includes("aarch64");
+  checks.system_status = text(t.w, "#app").includes("Live monitoring") && text(t.w, "#app").includes("9.9.9") && text(t.w, "#app").includes("Health check") && text(t.w, "#sys-machine").includes("aarch64");
   checks.system_has_no_theme_cards = d.querySelectorAll(".pal").length === 0;
   const btn = d.getElementById("theme-toggle");
   checks.theme_button_starts_with_the_system = !d.documentElement.hasAttribute("data-theme") && btn.getAttribute("aria-label") === "Switch to dark theme" && btn.querySelector("use").getAttribute("href").endsWith("#i-moon");
@@ -279,6 +285,27 @@ const text = (w, sel) => (w.document.querySelector(sel) || {}).textContent || ""
   checks.unknown_theme_is_ignored = o.doc.documentElement.getAttribute("data-theme") === "dark";
   o.close();
 
+}
+
+// ------------------------------------------------------------ health page
+{
+  const t = await run({ hash: "#/health", wait: 400 });
+  const d = t.doc;
+  checks.health_page_shows_the_score = d.querySelector(".health-hero .score strong").textContent === "62" && d.querySelector(".health-hero .score").classList.contains("tone-bad");
+  checks.health_groups_by_state = d.querySelectorAll(".check-group").length === 3 && d.querySelectorAll(".check.st-fail").length === 1;
+  checks.health_shows_how_to_fix = /Set PermitRootLogin to no/.test(d.querySelector(".check.st-fail .check-fix").textContent);
+  checks.health_lists_the_passed_ones = /1 checks passed/.test(d.querySelector("details.more summary").textContent);
+  checks.health_is_marked_in_the_menu = d.querySelector('#nav a[data-view="health"]').getAttribute("aria-current") === "page";
+  t.close();
+  const h = await run({ hash: "#/health", data: { assessment: { ...ASSESSMENT, checks: [{ ...ASSESSMENT.checks[0], title: "<img src=x onerror=1>", detail: "<script>x</script>", fix: "<b>x</b>", state: "bad\"state" }] } }, wait: 400 });
+  checks.health_hostile_text_is_text = h.doc.querySelectorAll("#app img, #app script, #app b").length === 0 && h.doc.querySelectorAll(".check.st-info").length === 1;
+  h.close();
+  const n = await run({ hash: "#/health", data: { assessment: { at: null, score: null, verdict: "Not checked yet", counts: {}, checks: [], full_view: false } }, wait: 400 });
+  checks.health_not_checked_yet = /Not checked yet/.test(n.doc.querySelector("#app").textContent) && !n.doc.querySelector(".health-hero");
+  n.close();
+  const s = await run({ hash: "#/system", wait: 400 });
+  checks.system_links_to_health = !!s.doc.querySelector('#app a[href="#/health"]') && /62 \/ 100/.test(s.doc.querySelector("#app").textContent);
+  s.close();
 }
 
 // ------------------------------------------------------------ full pages with tables

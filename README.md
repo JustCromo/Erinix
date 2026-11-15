@@ -112,6 +112,18 @@ In the cockpit: `Tab` moves between panels, `Enter` opens a row, `/` searches, `
 `R` raises the view to every program (sudo password), `?` shows all keys. Only one Erinix watches at a time; a second
 one opens as a viewer of the same data.
 
+## Health check (assessment)
+
+```
+erinix assess            # 19 read-only checks: SSH, accounts, permissions, open ports, firewall, kernel, suspicious files, startup changes
+erinix assess --all      # also lists what passed
+```
+
+Each finding says what was found and how to fix it, and the score goes from 0 to 100. Erinix only LOOKS: it never changes a file
+or a setting. Checks that need root (for example empty passwords in `/etc/shadow`) say "could not check" instead of guessing.
+The agent repeats the check every half hour; the result shows in the cockpit (Health panel, `a` to check now) and on the
+dashboard (Health page).
+
 Why not `sudo erinix`? `sudo` uses its own short PATH, so a command installed in your home or in a venv is "not found".
 `erinix --elevate` (or `R`) does it safely instead: only a tiny helper runs as root, and all it does is READ `/proc` and
 send a plain list to your normal user's Erinix. The helper runs `python -m erinix helper` from the same install, so for

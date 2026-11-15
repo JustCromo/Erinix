@@ -440,3 +440,26 @@ a.tile:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 45%,
   .detail-pane { max-height: calc(100vh - 64px); }
   .fill .panel { height: calc(100vh - 210px); }
 }
+
+
+/* ------------------------------------------------------------ health: the posture check */
+.health-hero { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+.score { display: flex; align-items: baseline; gap: 6px; }
+.score strong { font-size: 3.6rem; font-weight: 900; line-height: 1; }
+.score span { color: var(--muted); font-weight: 700; }
+.tone-ok { color: var(--ok); } .tone-warn { color: var(--medium-text); } .tone-bad { color: var(--high); }
+.health-text { flex: 1 1 280px; min-width: 0; }
+.health-text h2 { margin: 0 0 4px; }
+.health-text .facts { margin: 4px 0 8px; }
+.check-group { margin: 22px 0 0; }
+.check-group h2 { display: flex; align-items: center; gap: 10px; margin: 0 4px 10px; }
+.check { --edge: var(--border); margin: 0 0 10px; padding: 14px 18px; border: 1px solid var(--border); border-left: 4px solid var(--edge); border-radius: 14px; background: var(--card); }
+.check.st-fail { --edge: var(--high); } .check.st-warn { --edge: var(--medium); }
+.check-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.check-mark { width: 1.4em; text-align: center; font-weight: 900; color: var(--edge); }
+.check.st-unknown .check-mark, .check.st-info .check-mark { color: var(--muted); }
+.check-top .tag { margin-left: auto; }
+.check-detail { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+.check-fix { margin: 8px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--card-2); overflow-wrap: anywhere; }
+.faint { color: var(--faint); }
+.health-text .tiny { text-align: left; margin: 0; }

@@ -30,14 +30,14 @@
     expired: "This sign-in link has expired.",
     unavailable: "Erinix could not read its data. Try: erinix doctor",
   };
-  const PAGE_NAMES = { home: "Cockpit", incidents: "Incidents", live: "Live", programs: "Programs", network: "Network", sources: "Sources", system: "System" };
+  const PAGE_NAMES = { home: "Cockpit", incidents: "Incidents", live: "Live", programs: "Programs", network: "Network", sources: "Sources", system: "System", health: "Health" };
   const ROUTINE = ["process.exec", "net.connect", "net.accept", "net.listen"];   // normal life of a machine: hidden in the live view until asked for
 
   const state = {
     overview: null, incidents: [], detail: null, selected: null, filter: "open", tag: null,
     csrf: null, version: "", locked: false, error: null, open: {}, lastKey: "", loginError: "", renderedView: "",
     feed: { events: [], lastId: 0, paused: false, pausedAt: null, queued: 0, only: false, loaded: false, q: "", routine: false },
-    inv: null, q: {}, f: {}, openIncidents: [],
+    inv: null, assess: null, q: {}, f: {}, openIncidents: [],
   };
   const app = document.getElementById("app");
 
@@ -107,6 +107,7 @@
     if (hash.indexOf("#/network") === 0) return { view: "network", id: null };
     if (hash.indexOf("#/sources") === 0) return { view: "sources", id: null };
     if (hash.indexOf("#/system") === 0) return { view: "system", id: null };
+    if (hash.indexOf("#/health") === 0) return { view: "health", id: null };
     m = /^#\/incidents(?:\/([A-Za-z0-9_-]{1,40}))?/.exec(hash);
     if (m) return { view: "incidents", id: m[1] || null };
     if (hash.indexOf("#/alerts") === 0) return { view: "incidents", id: null };
@@ -161,11 +162,15 @@
         try { state.inv = await request("GET", "/api/inventory"); }
         catch (err) { if (err.message === "locked") throw err; }
       }
+      if (r.view === "health" || r.view === "system") {
+        try { state.assess = await request("GET", "/api/assessment"); }
+        catch (err) { if (err.message === "locked") throw err; }
+      }
       // Counters and the chart change all the time: they are updated in place, never by redrawing the page.
       const stable = Object.assign({}, overview);
       ["heartbeat_age", "events_24h", "alerts_24h", "activity", "sources"].forEach(function (k) { delete stable[k]; });   // these change all the time: updated in place
       const key = JSON.stringify([stable, incidents, detail, state.filter, state.tag, r, selected,
-        r.view === "live" ? activeNow(incidents).map(function (i) { return i.id; }) : null, r.view === "home" ? incidents : null, [overview.sources.length, overview.sources.filter(function (x) { return x.state === "ok"; }).length]]);
+        r.view === "live" ? activeNow(incidents).map(function (i) { return i.id; }) : null, r.view === "home" ? incidents : null, state.assess ? [state.assess.score, state.assess.at] : null, [overview.sources.length, overview.sources.filter(function (x) { return x.state === "ok"; }).length]]);
       state.overview = overview; state.incidents = incidents; state.detail = detail; state.selected = selected; state.error = null;
       if (key !== state.lastKey) { state.lastKey = key; render(); }
       updateLive(overview);
@@ -712,9 +717,45 @@
       h("section", { class: "card" }, h("h2", null, "Last 24 hours"), h("div", { id: "spark-holder", "data-k": JSON.stringify(o.activity) }, sparkline(o.activity)),
         h("p", { class: "facts" }, h("span", null, h("strong", { "data-live": "events_24h" }, fmt(o.events_24h)), " events checked"),
           h("span", null, h("strong", { "data-live": "alerts_24h" }, fmt(o.alerts_24h)), " alerts raised"))),
-      h("section", { class: "card" }, h("h2", null, "Assessment"),
-        h("div", { class: "soon" }, h("span", { class: "tag" }, "Coming soon"), h("span", null, "A vulnerability and risk assessment of this machine will live here."))),
+      h("section", { class: "card" }, h("h2", null, "Health check"),
+        state.assess && state.assess.score !== null
+          ? h("p", null, h("strong", { class: "tone-" + scoreTone(state.assess.score) }, state.assess.score + " / 100"), "  " + state.assess.verdict + "  ", h("a", { class: "more", href: "#/health" }, "See the details →"))
+          : h("p", { class: "empty" }, "Not checked yet. It runs when Erinix starts.")),
     ];
+  }
+
+  // ------------------------------------------------------------------ health (the posture check)
+  const CHECK_STATES = { fail: ["To fix", "✖"], warn: ["Worth a look", "▲"], unknown: ["Could not check", "?"], info: ["For your information", "i"] };
+  function scoreTone(score) { return score >= 90 ? "ok" : score >= 70 ? "warn" : "bad"; }
+  function checkRow(c) {
+    const st = CHECK_STATES[c.state] ? c.state : "info";
+    return h("article", { class: "check st-" + st },
+      h("div", { class: "check-top" }, h("span", { class: "check-mark" }, CHECK_STATES[st][1]), h("strong", null, String(c.title || "")), h("span", { class: "tag" }, String(c.area || ""))),
+      h("p", { class: "check-detail" }, String(c.detail || "")),
+      c.fix ? h("p", { class: "check-fix" }, h("strong", null, "How to fix: "), String(c.fix)) : null);
+  }
+  function viewHealth() {
+    const a = state.assess;
+    const head = pageHead("Health", "How hard this machine is to attack. Erinix only looks: it never changes your files or settings.");
+    if (!a || a.score === null) {
+      return [head, h("section", { class: "card" }, h("p", { class: "empty" }, "Not checked yet. Erinix checks when it starts and every half hour. You can also run  erinix assess  in a terminal."))];
+    }
+    const c = a.counts || {}, known = { fail: 1, warn: 1, unknown: 1, info: 1, ok: 1, na: 1 };
+    const checks = (a.checks || []).filter(function (x) { return x.state !== "na"; }).map(function (x) { return Object.assign({}, x, { state: known[x.state] ? x.state : "info" }); });   // an odd state is shown, as information
+    const hero = h("section", { class: "card health-hero" },
+      h("div", { class: "score tone-" + scoreTone(a.score) }, h("strong", null, String(a.score)), h("span", null, "/ 100")),
+      h("div", { class: "health-text" }, h("h2", null, a.verdict),
+        h("p", { class: "facts" }, h("span", null, h("strong", null, fmt(c.fail)), " to fix"), h("span", null, h("strong", null, fmt(c.warn)), " to look at"),
+          h("span", null, h("strong", null, fmt(c.unknown)), " could not be checked"), h("span", null, h("strong", null, fmt(c.ok)), " fine")),
+        h("p", { class: "tiny" }, "Checked " + (a.at ? timeAgo(a.at) : "") + (a.full_view ? "." : ". Without root some checks cannot see everything: press R in the terminal cockpit."))));
+    const groups = ["fail", "warn", "unknown", "info"].map(function (k) {
+      const rows = checks.filter(function (x) { return x.state === k; });
+      return rows.length ? h("section", { class: "check-group" }, h("h2", null, CHECK_STATES[k][0] + " ", h("span", { class: "panel-count" }, String(rows.length))), rows.map(checkRow)) : null;
+    });
+    const fine = checks.filter(function (x) { return x.state === "ok"; });
+    const passed = fine.length ? h("details", { class: "more" }, h("summary", null, fine.length + " checks passed"),
+      h("ul", { class: "plain" }, fine.map(function (x) { return h("li", null, h("span", { class: "ok" }, "✔ "), x.title, h("span", { class: "faint" }, "  " + x.detail)); }))) : null;
+    return [head, hero].concat(groups, [passed]);
   }
 
   function viewLocked() {
@@ -755,7 +796,7 @@
     count.textContent = String(open);
     applyTheme(o.theme);
     updateThemeButton();
-    const views = { live: viewLive, incidents: viewIncidents, system: viewSystem, programs: viewPrograms, network: viewNetwork, sources: viewSources };
+    const views = { live: viewLive, incidents: viewIncidents, health: viewHealth, system: viewSystem, programs: viewPrograms, network: viewNetwork, sources: viewSources };
     const body = (views[view] || viewHome)(o);
     const y = window.scrollY, same = state.renderedView === view;
     const focus = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("search") ? document.activeElement : null;
