@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -25,13 +26,16 @@ REFRESH = 1.0
 SEV_ROLE = {"critical": "bad", "high": "bad", "medium": "warn", "low": "dim"}
 HELP = [
     "Tab / Shift-Tab  move between panels          1-6  jump to a panel",
-    "Up / Down, j / k  select a row                 PgUp / PgDn  scroll faster",
+    "Up / Down  select a row (j also goes down)    PgUp / PgDn  scroll faster",
     "Enter  fill the screen with the panel, then open a row   Esc / q  go back",
     "/  search in the panel (Esc clears)            x  close the selected incident",
     "r  show or hide routine activity               p  pause or resume the live feed",
     ":  type a command (alerts, status, help...)    s  what Erinix is watching",
     "w  open the web dashboard                      R  see every program (asks for your sudo password)",
     "a  check this machine now (Health panel)       Health panel: Enter on a row shows how to fix it",
+    "b  block the address of the selected incident/event/connection (asks first)",
+    "k  stop the selected program (asks first)      f  fix the selected Health finding (asks first)",
+    ":undo N  reverse a block or fix                 :actions  what Erinix has done",
     "?  this help                                   q  quit",
 ]
 
@@ -101,9 +105,11 @@ def sparkline(values: list[int], width: int) -> str:
 class Cockpit:
     def __init__(self, theme: Theme, out, *, open_store: Callable[[], object], registry=None, runtime=None,
                  size_fn: Callable[[], tuple[int, int]] = term.terminal_size, clock_fn: Callable[[], float] = time.time,
-                 elevate_fn: Callable[[], str] | None = None) -> None:
+                 elevate_fn: Callable[[], str] | None = None, service=None) -> None:
         self.theme, self.out, self.open_store, self.registry, self.runtime = theme, out, open_store, registry, runtime
         self.size_fn, self.now, self.elevate_fn = size_fn, clock_fn, elevate_fn
+        self.service = service                      # what Erinix may DO (block, kill, fix); None: view only
+        self.pending: tuple[str, dict, str] | None = None
         self.data = Data()
         self.focus = 0
         self.sel = {p: 0 for p in PANELS}
@@ -260,6 +266,9 @@ class Cockpit:
             prompt = "/" if self.mode == "search" else ":"
             row = [Seg(" " + prompt, "accent", True), Seg(self.buffer), Seg("▏", "accent")]
             hint = [Seg(" Enter runs, Esc cancels", "dim")]
+        elif self.mode == "confirm":
+            row = [Seg(" y", "accent", True), Seg(" do it    "), Seg("any other key", "accent", True), Seg(" cancel")]
+            hint = []
         else:
             row = [Seg(" " + (self.flash or self._status()), "warn" if self.flash else "dim")]
             hint = []
@@ -288,7 +297,7 @@ class Cockpit:
         th = self.theme
         head, foot = self._header(cols), self._footer(cols)
         body_h = rows - len(head) - len(foot)
-        if self.mode == "overlay":
+        if self.mode in ("overlay", "confirm"):
             body = self._overlay_box(cols, body_h)
         elif cols >= 110 and not self.zoom:
             lw = cols * 11 // 20
@@ -323,6 +332,8 @@ class Cockpit:
 
     # ------------------------------------------------------------------ keys
     def handle(self, tok: str) -> None:
+        if self.mode == "confirm":
+            return self._confirm_key(tok)
         if self.mode in ("search", "command"):
             return self._edit(tok)
         if self.mode == "overlay":
@@ -343,7 +354,7 @@ class Cockpit:
             self.focus = int(tok) - 1
         elif tok in ("j", "\x1b[B", "\x1bOB"):
             self.sel[panel] = min(max(0, n - 1), self.sel[panel] + 1)
-        elif tok in ("k", "\x1b[A", "\x1bOA"):
+        elif tok in ("\x1b[A", "\x1bOA"):
             self.sel[panel] = max(0, self.sel[panel] - 1)
         elif tok == "\x1b[6~":
             self.sel[panel] = min(max(0, n - 1), self.sel[panel] + page)
@@ -382,6 +393,12 @@ class Cockpit:
             self.open_web()
         elif tok == "a":
             self.recheck()
+        elif tok == "b":
+            self.act_block()
+        elif tok == "k":
+            self.act_kill()
+        elif tok == "f":
+            self.act_fix()
         elif tok == "R":
             self.elevate()
         elif tok == "\x1b":
@@ -557,6 +574,73 @@ class Cockpit:
             self.overlay.append("")
             self.overlay.append("The link is also copied: paste it into a browser if none opened.")
 
+    # ---- mitigation: always shown first, never done without a y
+    def ask(self, action: str, args: dict, title: str = "") -> None:
+        from erinix import actions
+
+        if self.service is None:
+            self.flash = "actions are not available here"
+            return
+        try:
+            plan = self.service.plan(action, args)
+        except actions.ActionError as exc:
+            self.flash = str(exc)
+            return
+        lines = list(plan.steps)
+        if plan.warning:
+            lines += ["", plan.warning]
+        if plan.needs_root and not getattr(self.service.helper, "alive", False) and os.geteuid() != 0:
+            lines += ["", "This needs root: press R first to give Erinix the root helper."]
+        lines += ["", "Press y to do it, any other key to cancel."]
+        self.show(plan.title, lines)
+        self.mode = "confirm"
+        self.pending = (action, plan.args if action != "kill" else plan.args, plan.title)
+
+    def _confirm_key(self, tok: str) -> None:
+        pending, self.pending, self.mode = self.pending, None, "normal"
+        if tok != "y" or pending is None:
+            self.flash = "cancelled, nothing was changed"
+            return
+        action, args, title = pending
+        result = self.service.run_action(action, args, title)
+        extra = []
+        if result.get("ok") and result.get("n") and result.get("undo"):
+            extra = ["", f"Written to the journal as #{result['n']}. Undo with:  :undo {result['n']}"]
+        self.show("Done" if result.get("ok") else "Not done", [result.get("message", "")] + extra)
+        self.refresh(True)
+
+    def _remote_ip(self, item: dict) -> str:
+        text = str(item.get("remote") or "")
+        if text.startswith("["):                           # [v6]:port
+            return text[1:].split("]")[0]
+        return text.rsplit(":", 1)[0] if text.count(":") == 1 else text
+
+    def act_block(self) -> None:
+        item, panel = self.selected(), PANELS[self.focus]
+        ip = ""
+        if panel == "incidents" and item and not item.get("local"):
+            ip = str(item.get("who", ""))
+        elif panel in ("live", "connections") and item:
+            ip = self._remote_ip(item)
+        if not ip:
+            self.flash = "select an incident, an event or a connection that comes from an address"
+            return
+        self.ask("block", {"ip": ip, "minutes": 60})
+
+    def act_kill(self) -> None:
+        item, panel = self.selected(), PANELS[self.focus]
+        if panel not in ("programs", "ports", "connections") or not item or not isinstance(item.get("pid"), int):
+            self.flash = "select a program (panel 6), a port or a connection that shows its program"
+            return
+        self.ask("kill", {"pid": item["pid"]})
+
+    def act_fix(self) -> None:
+        item = self.selected() if PANELS[self.focus] == "posture" else None
+        if not item:
+            self.flash = "select a row in the Health panel (3)"
+            return
+        self.ask("fix", {"check": str(item.get("id", ""))})
+
     def recheck(self) -> None:
         """Check the machine again now; the agent does it (with root's eyes when it has them) and the panel updates in a moment."""
         agent = getattr(self.runtime, "agent", None)
@@ -613,7 +697,7 @@ class Cockpit:
                     if tok.startswith("\x1b[<"):          # mouse: ignored for now (wheel scrolls the selection)
                         ev = term.parse_mouse(tok)
                         if ev is not None and ev.button in (64, 65):
-                            self.handle("k" if ev.button == 64 else "j")
+                            self.handle("\x1b[A" if ev.button == 64 else "j")
                     else:
                         self.handle(tok)
                     changed = True

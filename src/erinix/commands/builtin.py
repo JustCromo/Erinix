@@ -19,8 +19,8 @@ from erinix.ui.views import alert_panel, describe_event, response_seg, severity_
 DEFAULT_RULES_DIR = "/etc/erinix/rules"
 MODE_NAMES = {"ebpf": "eBPF (CO-RE)", "auditd": "auditd", "minimal": "minimal"}
 _RESPONSE_RANK = {Response.REPORT_ONLY: 0, Response.INTERACTIVE: 1, Response.AUTO: 2}
-GROUP_ORDER = ("General", "Status", "Dashboard", "Diagnostics", "Rules", "Demo", "Setup")
-COMING_SOON = "agent · watch · incident · response · block · sensor"
+GROUP_ORDER = ("General", "Status", "Respond", "Dashboard", "Diagnostics", "Rules", "Demo", "Setup")
+COMING_SOON = "incident · sensor"
 
 
 # ------------------------------------------------------------------ helpers
@@ -245,10 +245,18 @@ def build_registry() -> Registry:
     reg.add(Command("replay", "Replay a simulated attack and show the alerts",
                     "replay [scenario] [--fast] [--rules PATH]", "Demo", cmd_replay,
                     arg_words=tuple(SCENARIOS) + ("--fast", "--rules")))
+    from erinix.commands import action_cmds as ac
     from erinix.commands import store_cmds as sc
 
     for name, summary, usage, group, handler, words in (
         ("status", "What needs your attention, in plain language", "status [--json]", "Status", sc.cmd_status, ("--json",)),
+        ("block", "Block an address for a while (asks first)", "block <ip> [--minutes N] [--yes]", "Respond", ac.cmd_block, ("--minutes", "--yes")),
+        ("unblock", "Lift a block", "unblock <ip> [--yes]", "Respond", ac.cmd_unblock, ("--yes",)),
+        ("blocked", "Addresses blocked right now", "blocked", "Respond", ac.cmd_blocked, ()),
+        ("kill", "Stop a program (asks first)", "kill <program number> [--force] [--yes]", "Respond", ac.cmd_kill, ("--force", "--yes")),
+        ("fix", "Restore safe permissions found by assess (asks first)", "fix [<check>] [--yes]", "Respond", ac.cmd_fix, ("--yes",)),
+        ("actions", "What Erinix has done, in order", "actions", "Respond", ac.cmd_actions, ()),
+        ("undo", "Reverse a block or a fix", "undo <number> [--yes]", "Respond", ac.cmd_undo, ("--yes",)),
         ("assess", "Check how hard this machine is to attack", "assess [--all] [--json]", "Status", sc.cmd_assess, ("--all", "--json")),
         ("alerts", "List the alerts", "alerts [--all|--dismissed] [--json]", "Status", sc.cmd_alerts, ("--all", "--dismissed", "--json")),
         ("alert", "Explain one alert (add --tech for details)", "alert <n> [--tech] [--json]", "Status", sc.cmd_alert, ("--tech", "--json")),

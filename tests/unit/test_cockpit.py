@@ -187,3 +187,81 @@ def test_tab_order_follows_the_screen(store_path):
     first_row = "\n".join(lines)
     # the Health box sits above the ports box in the right column, matching the Tab order
     assert first_row.index("3 Health") < first_row.index("4 Open ports") < first_row.index("5 Connections") < first_row.index("6 Programs")
+
+
+# ------------------------------------------------------------------ mitigation keys
+class FakeService:
+    helper = None
+
+    def __init__(self):
+        from erinix import actions
+        self.actions, self.ran = actions, []
+
+    def plan(self, action, args):
+        if args.get("ip") == "127.0.0.1":
+            raise self.actions.ActionError("this address cannot be blocked")
+        return self.actions.Plan(action, args, f"{action} {args}", ["step one"], needs_root=False)
+
+    def run_action(self, action, args, title=""):
+        self.ran.append((action, args))
+        return {"ok": True, "message": "did it", "undo": {"action": "unblock"}, "n": 3}
+
+
+def with_service(store_path):
+    c = make(store_path)
+    c.service = FakeService()
+    c.refresh(True)
+    return c
+
+
+def test_nothing_is_done_without_a_y(store_path):
+    c = with_service(store_path)
+    c.handle("1")
+    c.handle("b")
+    assert c.mode == "confirm" and "Press y" in "\n".join(c.overlay) and not c.service.ran
+    c.handle("n")
+    assert c.mode == "normal" and not c.service.ran and "cancelled" in c.flash
+    c.handle("b"); c.handle("\r")                        # Enter is not a yes either
+    assert not c.service.ran
+    c.handle("b"); c.handle("y")
+    assert c.service.ran and c.service.ran[0][0] == "block" and "Undo with" in "\n".join(c.overlay)
+
+
+def test_block_uses_the_incident_address_and_refuses_this_machine(store_path):
+    c = with_service(store_path)
+    c.handle("1")
+    c.handle("b")
+    assert c.pending[1]["ip"] == c.data.incidents[0]["who"]
+    c.handle("n")
+    c.data.incidents[0]["local"] = True
+    c.handle("b")
+    assert c.mode == "normal" and "comes from an address" in c.flash
+
+
+def test_kill_and_fix_need_the_right_panel(store_path):
+    c = with_service(store_path)
+    c.handle("k")
+    assert "select a program" in c.flash
+    c.handle("6"); c.handle("k")
+    assert c.mode == "confirm" and c.pending[0] == "kill" and c.pending[1]["pid"] == 7
+    c.handle("n")
+    c.handle("f")
+    assert "Health panel" in c.flash
+    c.handle("3"); c.handle("f")
+    assert c.pending[0] == "fix" and c.pending[1]["check"] == "ssh.root_login"
+
+
+def test_refused_plans_explain_themselves(store_path):
+    c = with_service(store_path)
+    c.ask("block", {"ip": "127.0.0.1"})
+    assert c.mode == "normal" and "cannot be blocked" in c.flash
+    c.service = None
+    c.ask("block", {"ip": "1.2.3.4"})
+    assert "not available" in c.flash
+
+
+def test_every_line_still_fits_in_confirm_mode(store_path):
+    c = with_service(store_path)
+    c.handle("1"); c.handle("b")
+    from erinix.tui.terminal import visible_width
+    assert all(visible_width(l) <= 140 for l in c.render())

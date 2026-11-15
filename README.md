@@ -124,6 +124,26 @@ or a setting. Checks that need root (for example empty passwords in `/etc/shadow
 The agent repeats the check every half hour; the result shows in the cockpit (Health panel, `a` to check now) and on the
 dashboard (Health page).
 
+## Response (mitigation)
+
+Erinix can act, but only with a short closed list, always showing what it will do first, and never from the web page:
+
+```
+block 203.0.113.50 --minutes 60   # drop traffic from one address for a while (nftables, table "erinix"); it expires by itself
+unblock 203.0.113.50              # lift it
+kill 4242                         # stop a program (checked against its start time, so a reused number is never hit)
+fix ssh.keys                      # restore safe permissions on what the Health check flagged
+actions                           # everything Erinix has done, in order
+undo 3                            # reverse a block or a fix
+```
+
+In the cockpit: select a row and press `b` (block its address), `k` (stop the program) or `f` (fix a Health finding); a box shows
+exactly what will happen and nothing is done until you press `y`. Things that need root run through the root helper (`R`).
+Safety rules: nft is called with a fixed argument list (never a command built from text), addresses of this machine, your
+router and special ranges cannot be blocked, blocks always expire (default 1 hour, at most 24), a fix finds its own targets and
+only ever touches a few known files (`/etc/passwd`, `/etc/shadow`, sudoers, `~/.ssh`), never follows links, and the root helper
+checks every request again. The journal lives in the private store.
+
 Why not `sudo erinix`? `sudo` uses its own short PATH, so a command installed in your home or in a venv is "not found".
 `erinix --elevate` (or `R`) does it safely instead: only a tiny helper runs as root, and all it does is READ `/proc` and
 send a plain list to your normal user's Erinix. The helper runs `python -m erinix helper` from the same install, so for

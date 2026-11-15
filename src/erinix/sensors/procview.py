@@ -124,6 +124,18 @@ def decode_assessment(line: str) -> dict | None:
         return None
 
 
+def decode_result(line: str) -> dict | None:
+    try:
+        d = json.loads(line)
+        undo = d.get("undo")
+        if undo is not None:
+            if not isinstance(undo, dict) or len(json.dumps(undo)) > 20_000:
+                raise ValueError("bad undo")
+        return {"id": _int(d["id"], 1, 2**31), "ok": d["ok"] is True, "message": _text(d["message"], 400), "undo": undo}
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
 class RemoteView:
     """The same picture, taken by someone else (the helper) and read from a stream of lines."""
 
@@ -135,6 +147,8 @@ class RemoteView:
         self.closed = False
         self.bad_lines = 0
         self.assessment: dict | None = None
+        self.results: dict[int, dict] = {}
+        self.result_ready = threading.Condition()
         self.nudge: Callable[[], None] | None = None     # asks the helper to look again now
         self._thread = threading.Thread(target=self._read, name="erinix-helper-reader", daemon=True)
 
@@ -151,6 +165,15 @@ class RemoteView:
                 if len(line) > MAX_LINE:                       # a line that never ends: give up on this helper
                     self.note = "the helper sent an oversized line"
                     break
+                if line.startswith('{"t":"result"'):
+                    got = decode_result(line)
+                    if got is None:
+                        self.bad_lines += 1
+                    else:
+                        with self.result_ready:
+                            self.results[got["id"]] = got
+                            self.result_ready.notify_all()
+                    continue
                 if line.startswith('{"t":"assess"'):
                     got = decode_assessment(line)
                     if got is None:
@@ -217,6 +240,24 @@ def code_is_user_writable() -> bool:
     return False
 
 
+def handle_action(msg: dict) -> str:
+    """Run one action asked for by the unprivileged side. Only the closed list in erinix.actions exists here."""
+    from erinix import actions
+
+    ident = msg.get("id")
+    if isinstance(ident, bool) or not isinstance(ident, int) or not 1 <= ident <= 2**31:
+        ident = 1
+    name, args = msg.get("action"), msg.get("args")
+    if name not in ("kill", "block", "unblock", "fix", "restore") or not isinstance(args, dict):
+        result = {"ok": False, "message": "the helper does not know that action", "undo": None}
+    else:
+        try:
+            result = actions.execute(name, args)
+        except Exception as exc:
+            result = {"ok": False, "message": f"the helper could not do it ({type(exc).__name__})", "undo": None}
+    return json.dumps({"t": "result", "id": ident, **result}, separators=(",", ":"))
+
+
 def helper_main(out: TextIO | None = None, *, interval: float = 0.5, proc: str = "/proc", stop: Callable[[], bool] = lambda: False,
                 sleep: Callable[[float], None] = time.sleep, stdin: TextIO | None = None, assess: bool = True) -> int:
     """Send a snapshot of /proc every `interval` seconds until the reader goes away."""
@@ -224,11 +265,22 @@ def helper_main(out: TextIO | None = None, *, interval: float = 0.5, proc: str =
     view = LocalView(proc)
     note = "development install: the code root runs can be changed by a normal user" if code_is_user_writable() else ""
     gone, nudged = threading.Event(), threading.Event()
+    todo: list[dict] = []                                  # actions the user's Erinix asked for; each is validated again here
     source = sys.stdin if stdin is None else stdin
     if source is not None and not source.isatty():
         def watch() -> None:                                    # a line from the parent means "look again now"; closing stdin means stop
             try:
-                while source.readline(100):
+                while True:
+                    line = source.readline(20_000)
+                    if not line:
+                        break
+                    if line.startswith('{"t":"act"'):
+                        try:
+                            msg = json.loads(line)
+                            if isinstance(msg, dict) and len(todo) < 8:
+                                todo.append(msg)
+                        except ValueError:
+                            pass
                     nudged.set()
             except (OSError, ValueError):
                 pass
@@ -242,6 +294,8 @@ def helper_main(out: TextIO | None = None, *, interval: float = 0.5, proc: str =
         owners_at = assessed_at = -1e9
         while not (stop() or gone.is_set() or os.getppid() != parent):
             began = time.monotonic()
+            while todo:
+                out.write(handle_action(todo.pop(0)) + "\n")
             if assess and (nudged.is_set() or began - assessed_at >= ASSESS_EVERY):
                 nudged.clear()
                 assessed_at = began
@@ -317,6 +371,32 @@ class ElevatedHelper:
         except (OSError, ValueError):
             pass
         return " (it was too slow to answer)"
+
+    @property
+    def alive(self) -> bool:
+        return self.view is not None and self.view.alive and self.process is not None
+
+    def request(self, action: str, args: dict, timeout: float = 20.0) -> dict:
+        """Ask the root helper to run one action and wait for its answer."""
+        view, proc = self.view, self.process
+        if view is None or proc is None or proc.stdin is None:
+            return {"ok": False, "message": "the root helper is not running", "undo": None}
+        self._ids = getattr(self, "_ids", 0) + 1
+        ident = self._ids
+        try:
+            proc.stdin.write(json.dumps({"t": "act", "id": ident, "action": action, "args": args}, separators=(",", ":")) + "\n")
+            proc.stdin.flush()
+        except (OSError, ValueError):
+            return {"ok": False, "message": "the root helper stopped answering", "undo": None}
+        end = time.monotonic() + timeout
+        with view.result_ready:
+            while ident not in view.results:
+                left = end - time.monotonic()
+                if left <= 0 or view.closed:
+                    return {"ok": False, "message": "the root helper did not answer in time", "undo": None}
+                view.result_ready.wait(min(left, 0.5))
+            got = view.results.pop(ident)
+        return {"ok": got["ok"], "message": got["message"], "undo": got["undo"]}
 
     def _nudge(self) -> None:
         try:

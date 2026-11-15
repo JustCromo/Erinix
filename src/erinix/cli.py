@@ -90,7 +90,11 @@ def _cockpit(registry, theme: Theme, *, elevate: bool) -> int:
         else:
             print(f"erinix: {helper.error}; continuing with your own programs only", file=sys.stderr)
     runtime.start()
-    cockpit = Cockpit(theme, sys.stdout, open_store=lambda: Store(readonly=True), registry=registry, runtime=runtime)
+    from erinix import actions
+
+    service = actions.Service(helper=helper if helper is not None and runtime.mode == "full" else None, open_store=lambda: Store())
+    actions.set_service(service)
+    cockpit = Cockpit(theme, sys.stdout, open_store=lambda: Store(readonly=True), registry=registry, runtime=runtime, service=service)
 
     def elevate_now() -> str:
         if os.geteuid() == 0 or runtime.mode == "full":
@@ -107,6 +111,7 @@ def _cockpit(registry, theme: Theme, *, elevate: bool) -> int:
             if not helper.authenticate():
                 return helper.error
         role = runtime.restart_with(helper)
+        service.helper = helper if runtime.mode == "full" else None
         return "now seeing every program" if runtime.mode == "full" else (runtime.note or helper.error or f"could not elevate ({role})")
 
     cockpit.elevate_fn = elevate_now
