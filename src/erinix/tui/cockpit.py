@@ -16,7 +16,8 @@ from erinix.tui import terminal as term
 from erinix.ui.render import Seg, display_width, fit, paint_segs, safe, seg_width
 from erinix.ui.theme import Theme
 
-PANELS = ("incidents", "live", "ports", "connections", "programs", "posture")
+# in the order they are laid out (left column top to bottom, then right column), so Tab and the numbers follow the screen
+PANELS = ("incidents", "live", "posture", "ports", "connections", "programs")
 TITLES = {"incidents": "Incidents", "live": "Live", "ports": "Open ports", "connections": "Connections", "programs": "Programs", "posture": "Health"}
 BLOCKS = " ▁▂▃▄▅▆▇█"
 ROUTINE = ("process.exec", "net.connect", "net.accept", "net.listen")
@@ -173,7 +174,7 @@ class Cockpit:
                 if c.get("state") not in marks:
                     continue
                 mark, role = marks[c["state"]]
-                out.append(([Seg(mark + " ", role, True), Seg(str(c.get("title", "")), role if c["state"] in ("fail", "warn") else None, True), Seg("  " + str(c.get("area", "")), "dim")],
+                out.append(([Seg(mark + " ", role, True), Seg(str(c.get("title", "")), role if c["state"] in ("fail", "warn") else None, True), Seg("  " + str(c.get("detail", "")), "dim")],
                             f"{c.get('title', '')} {c.get('area', '')} {c.get('detail', '')}", c))
         q = self.query[panel].lower()
         if q:
@@ -273,6 +274,8 @@ class Cockpit:
             return self.data.error
         if rt is not None and getattr(rt, "error", ""):
             return rt.error
+        if rt is not None and getattr(rt, "note", "") and getattr(rt, "mode", "full") != "full":
+            return f"full view not available: {rt.note}"
         if rt is not None and getattr(rt, "mode", "full") != "full":
             unknown = sum(1 for r in self.data.inventory.get("listening", []) if not r.get("program"))
             if unknown:
@@ -378,7 +381,7 @@ class Cockpit:
         elif tok == "w":
             self.open_web()
         elif tok == "a":
-            self.run_command("assess --all")
+            self.recheck()
         elif tok == "R":
             self.elevate()
         elif tok == "\x1b":
@@ -554,11 +557,26 @@ class Cockpit:
             self.overlay.append("")
             self.overlay.append("The link is also copied: paste it into a browser if none opened.")
 
+    def recheck(self) -> None:
+        """Check the machine again now; the agent does it (with root's eyes when it has them) and the panel updates in a moment."""
+        agent = getattr(self.runtime, "agent", None)
+        if agent is None:
+            self.run_command("assess --all")
+            return
+        agent.request_assessment()
+        self.flash = "checking the machine again..."
+
     def elevate(self) -> None:
         if self.elevate_fn is None:
             self.flash = "already seeing everything" if getattr(self.runtime, "mode", "") == "full" else "this cannot be done here"
             return
         self.flash = self.elevate_fn() or ""
+        rt = self.runtime
+        if rt is not None and getattr(rt, "mode", "full") != "full" and self.flash not in ("cancelled", ""):
+            self.show("Could not see every program", [self.flash, "", "Erinix keeps watching your own programs.", "",
+                                                      "Things to try:", "  - run  sudo -v  in this terminal, then press R again",
+                                                      "  - check that your user may use sudo", "  - or start with  erinix --elevate"])
+            self.flash = ""
         self.refresh(True)
 
     # ------------------------------------------------------------------ the loop

@@ -82,7 +82,9 @@ def test_helper_emits_hello_then_snapshots(tmp_path):
     stdin.close()
     lines = out.getvalue().splitlines()
     assert json.loads(lines[0])["t"] == "hello" and json.loads(lines[0])["uid"] == os.geteuid()
-    assert all(procview.decode_snapshot(l) is not None for l in lines[1:]) and len(lines) >= 2
+    snaps = [l for l in lines[1:] if l.startswith('{"t":"snap"')]
+    assert snaps and all(procview.decode_snapshot(l) is not None for l in snaps)
+    assert any(l.startswith('{"t":"assess"') and procview.decode_assessment(l) for l in lines)
 
 
 class FakeHelper:
@@ -135,3 +137,61 @@ def test_runtime_second_instance_is_a_viewer(tmp_path):
         first.stop()
         second.stop()
     assert first.lock.fd is None
+
+
+def _assessment():
+    from erinix.assessment import Env, run_assessment
+    return run_assessment(Env(root="/nonexistent-erinix-root", proc="/nonexistent-proc", euid=0))
+
+
+def test_assessment_roundtrip_over_the_pipe():
+    result = _assessment()
+    got = procview.decode_assessment(procview.encode_assessment(result))
+    assert got and got["score"] == result["score"] and len(got["checks"]) == len(result["checks"])
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda d: d["data"].update(score=101),
+    lambda d: d["data"].update(score="80"),
+    lambda d: d["data"]["checks"][0].update(state="rm -rf"),
+    lambda d: d["data"]["checks"][0].update(detail="x" * 5000),
+    lambda d: d["data"]["checks"][0].pop("fix"),
+    lambda d: d["data"].update(checks="no"),
+    lambda d: d["data"]["counts"].update(fail=-1),
+])
+def test_hostile_assessment_is_rejected(mutate):
+    data = json.loads(procview.encode_assessment(_assessment()))
+    mutate(data)
+    assert procview.decode_assessment(json.dumps(data)) is None
+
+
+def test_remote_view_keeps_the_latest_assessment():
+    line = procview.encode_assessment(_assessment())
+    view = procview.RemoteView(io.StringIO('{"t":"hello","uid":0,"note":""}\n' + line + "\n" + '{"t":"assess","data":5}\n')).start()
+    view._thread.join(2)
+    assert view.assessment and view.assessment["checks"] and view.bad_lines == 1
+
+
+def test_real_helper_process_end_to_end():
+    """Starts the helper as a real subprocess (as the current user) and reads its snapshots and its assessment."""
+    import subprocess
+    import sys
+    h = procview.ElevatedHelper(argv=[sys.executable, "-m", "erinix", "helper"], require_root=False,
+                                popen=lambda argv, **kw: subprocess.Popen(argv, env={**os.environ, "PYTHONPATH": os.path.join(os.path.dirname(__file__), "..", "..", "src")}, **kw))
+    try:
+        assert h.start(wait=10), h.error
+        end = time.time() + 10
+        while time.time() < end and h.view.assessment is None:
+            time.sleep(0.05)
+        assert os.getpid() in h.view.scan() and h.view.assessment
+        h.view.nudge()
+    finally:
+        h.stop()
+    assert h.process is None
+
+
+def test_failed_helper_says_why():
+    import subprocess
+    import sys
+    h = procview.ElevatedHelper(argv=[sys.executable, "-c", "import sys; sys.stderr.write('sudo: a password is required'); sys.exit(1)"])
+    assert not h.start(wait=5) and "password is required" in h.error

@@ -65,7 +65,7 @@ def test_wide_layout_shows_all_panels(store_path):
 def test_control_characters_from_the_machine_are_not_printed(store_path):
     c = make(store_path)
     c.refresh(True)
-    c.focus = 4
+    c.focus = 5
     assert "\x1b[31m" not in "\n".join(c.render()).replace("\x1b[H", "")
 
 
@@ -74,8 +74,8 @@ def test_keys_move_focus_search_and_quit(store_path):
     c.refresh(True)
     c.handle("\t")
     assert c.focus == 1
-    c.handle("3")
-    assert c.focus == 2
+    c.handle("4")
+    assert c.focus == 3 and ck.PANELS[c.focus] == "ports"
     c.handle("/"); c.handle("2"); c.handle("2"); c.handle("\r")
     assert c.query["ports"] == "22"
     c.handle("/"); c.handle("z"); c.handle("z"); c.handle("z"); c.handle("\r")
@@ -144,7 +144,7 @@ def test_sparkline_and_helpers():
 def test_enter_goes_in_and_esc_goes_back(store_path):
     c = make(store_path)
     c.refresh(True)
-    c.handle("3")
+    c.handle("4")
     c.handle("\r"); c.handle("\r")
     text = "\n".join(c.overlay)
     assert c.mode == "overlay" and "Port 22" in c.overlay_title and "unknown" in text
@@ -173,7 +173,17 @@ def test_health_panel_lists_only_what_needs_attention_and_shows_the_fix(store_pa
     rows = c.rows("posture")
     assert len(rows) == 1 and "Root cannot log in" in rows[0][1]
     assert "62/100" in "\n".join(c.render())
-    c.handle("6")
+    c.handle("3")
     c.handle("\r"); c.handle("\r")
     text = "\n".join(c.overlay)
     assert "How to fix" in text and "PermitRootLogin" in text and "\x1b" not in text
+
+
+def test_tab_order_follows_the_screen(store_path):
+    assert ck.PANELS == ("incidents", "live", "posture", "ports", "connections", "programs")
+    c = make(store_path)
+    c.refresh(True)
+    lines = c.render()
+    first_row = "\n".join(lines)
+    # the Health box sits above the ports box in the right column, matching the Tab order
+    assert first_row.index("3 Health") < first_row.index("4 Open ports") < first_row.index("5 Connections") < first_row.index("6 Programs")

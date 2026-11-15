@@ -56,6 +56,7 @@ class Agent:
         self._assess_at = -1e9
         self._assess_result: dict | None = None
         self._assess_thread = None
+        self._assess_seen = None
         self.started = clock()
 
     # ------------------------------------------------------------ one look
@@ -95,6 +96,13 @@ class Agent:
         self._assessment(now)
         return len(batch)
 
+    def request_assessment(self) -> None:
+        """Check again as soon as possible (the cockpit's `a` key)."""
+        self._assess_at = -1e9
+        nudge = getattr(self.view, "nudge", None)
+        if nudge is not None:
+            nudge()
+
     def _assessment(self, now: float) -> None:
         """The posture check reads many files, so it runs beside the loop; only this thread of the loop touches the store."""
         if self._assess_result is not None:
@@ -103,6 +111,15 @@ class Agent:
             except Exception:
                 pass
             self._assess_result = None
+        if self.assess and self.view is not None and hasattr(self.view, "assessment"):     # a root helper does it with root's eyes
+            got = self.view.assessment
+            if got is not None and got is not self._assess_seen:
+                self._assess_seen = got
+                try:
+                    self.store.set_meta("assessment", got)
+                except Exception:
+                    pass
+            return
         if not self.assess or now - self._assess_at < ASSESS_EVERY or (self._assess_thread is not None and self._assess_thread.is_alive()):
             return
         self._assess_at = now
@@ -139,7 +156,7 @@ class Agent:
         if self.processes is not None:
             for rec in sorted(self.processes.known.values(), key=lambda r: -r.start_ticks)[:MAX_PROCESSES]:
                 procs.append({"pid": rec.pid, "ppid": rec.ppid, "uid": rec.uid, "name": rec.comm, "command": rec.command[:300]})
-        return {"at": self.clock(), "host": _host(), "processes": procs, "process_total": len(self.processes.known) if self.processes else 0,
+        return {"at": self.clock(), "host": {**_host(), "root": self.privileged}, "processes": procs, "process_total": len(self.processes.known) if self.processes else 0,
                 "listening": listening, "connections": connections}
 
     # ------------------------------------------------------------ the loop

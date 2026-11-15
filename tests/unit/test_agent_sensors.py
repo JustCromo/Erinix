@@ -381,3 +381,46 @@ def test_agent_without_assess_never_checks(tmp_path):
     agent.step()
     assert agent._assess_thread is None and store.get_meta("assessment") is None
     agent.close()
+
+
+def test_agent_takes_the_posture_check_from_the_root_helper(tmp_path):
+    from erinix.commands.builtin import default_rules_path
+    from erinix.engine import Correlator
+    from erinix.recorder import Recorder
+    from erinix.rules import load_rules
+    from erinix.store import Store
+
+    class View:
+        privileged = True
+        assessment = {"score": 91, "checks": [], "verdict": "v", "counts": {}, "at": 1.0, "full_view": True}
+        nudged = 0
+        def nudge(self): self.nudged += 1
+        def scan(self): return {}
+        def sockets(self): return []
+        def owners(self): return {}
+
+    view = View()
+    store = Store(tmp_path / "e.db")
+    agent = Agent(store, Recorder(store, Correlator(load_rules(default_rules_path(None)))), cfg.Config(processes=False, network=False), proc=str(tmp_path), view=view, assess=True)
+    agent.start()
+    agent.step()
+    assert store.get_meta("assessment")["score"] == 91 and agent._assess_thread is None
+    agent.request_assessment()
+    assert view.nudged == 1
+    agent.close()
+
+
+def test_inventory_says_whether_the_agent_sees_everyone(tmp_path):
+    from erinix.commands.builtin import default_rules_path
+    from erinix.engine import Correlator
+    from erinix.recorder import Recorder
+    from erinix.rules import load_rules
+    from erinix.store import Store
+
+    store = Store(tmp_path / "e.db")
+    agent = Agent(store, Recorder(store, Correlator(load_rules(default_rules_path(None)))), cfg.Config(processes=False, network=False), proc=str(tmp_path))
+    agent.privileged = False
+    assert agent.inventory()["host"]["root"] is False
+    agent.privileged = True
+    assert agent.inventory()["host"]["root"] is True
+    agent.close()
