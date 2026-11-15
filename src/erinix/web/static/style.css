@@ -427,7 +427,14 @@ a.tile:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 45%,
 /* the menu is a rail glued to the left edge, full height: it belongs to the window, not floating over the page */
 @media (min-width: 900px) {
   .shell { max-width: none; margin: 0; padding: 0; gap: 0; grid-template-columns: 236px minmax(0, 1fr); }
-  .sidebar { top: 0; height: 100vh; border-radius: 0; border: 0; border-right: 1px solid var(--border); box-shadow: none; background: var(--card); padding: 22px 14px 16px; }
+  .sidebar { top: 0; height: 100vh; border-radius: 0; border: 0; border-right: 1px solid var(--border); box-shadow: none; background: var(--card); padding: 22px 0 16px; gap: 14px; }
+  /* one left edge for everything: logo, group names, icons, labels and the footer all start at 22px */
+  .brand { padding: 0 22px; }
+  .side-foot { padding: 0 22px; }
+  nav { gap: 0; justify-content: stretch; }   /* the phone bar spreads its items (space-around): here they fill the column */
+  .nav-group { margin: 16px 22px 6px; }
+  nav a { border-radius: 0; padding: 10px 22px 10px 19px; border-left: 3px solid transparent; }
+  nav a[aria-current="page"] { border-left-color: var(--primary); }
   .content { padding: 24px 32px 40px; }
   .list-pane { height: calc(100vh - 64px); }
   .detail-pane { max-height: calc(100vh - 64px); }
