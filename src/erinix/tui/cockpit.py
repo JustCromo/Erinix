@@ -16,20 +16,21 @@ from erinix.tui import terminal as term
 from erinix.ui.render import Seg, display_width, fit, paint_segs, safe, seg_width
 from erinix.ui.theme import Theme
 
-PANELS = ("incidents", "live", "ports", "connections", "programs")
-TITLES = {"incidents": "Incidents", "live": "Live", "ports": "Open ports", "connections": "Connections", "programs": "Programs"}
+PANELS = ("incidents", "live", "ports", "connections", "programs", "posture")
+TITLES = {"incidents": "Incidents", "live": "Live", "ports": "Open ports", "connections": "Connections", "programs": "Programs", "posture": "Health"}
 BLOCKS = " ▁▂▃▄▅▆▇█"
 ROUTINE = ("process.exec", "net.connect", "net.accept", "net.listen")
 REFRESH = 1.0
 SEV_ROLE = {"critical": "bad", "high": "bad", "medium": "warn", "low": "dim"}
 HELP = [
-    "Tab / Shift-Tab  move between panels          1-5  jump to a panel",
+    "Tab / Shift-Tab  move between panels          1-6  jump to a panel",
     "Up / Down, j / k  select a row                 PgUp / PgDn  scroll faster",
     "Enter  fill the screen with the panel, then open a row   Esc / q  go back",
     "/  search in the panel (Esc clears)            x  close the selected incident",
     "r  show or hide routine activity               p  pause or resume the live feed",
     ":  type a command (alerts, status, help...)    s  what Erinix is watching",
     "w  open the web dashboard                      R  see every program (asks for your sudo password)",
+    "a  check this machine now (Health panel)       Health panel: Enter on a row shows how to fix it",
     "?  this help                                   q  quit",
 ]
 
@@ -38,6 +39,7 @@ HELP = [
 class Data:
     overview: dict = field(default_factory=dict)
     inventory: dict = field(default_factory=dict)
+    assessment: dict = field(default_factory=dict)
     incidents: list = field(default_factory=list)
     events: list = field(default_factory=list)
     error: str = ""
@@ -48,19 +50,20 @@ def load_data(open_store: Callable[[], object], now: float | None = None) -> Dat
     """One consistent look at the store (read-only). Never raises: a missing store is a message."""
     from erinix.incidents import build_incidents
     from erinix.store import StoreError
-    from erinix.summary import build_inventory, build_overview, empty_inventory, empty_overview
+    from erinix.assessment import empty_assessment
+    from erinix.summary import build_assessment, build_inventory, build_overview, empty_inventory, empty_overview
 
     now = time.time() if now is None else now
     try:
         store = open_store()
     except StoreError:
-        return Data(empty_overview(), empty_inventory(), [], [], "no data yet: the agent is starting", now)
+        return Data(empty_overview(), empty_inventory(), empty_assessment(), [], [], "no data yet: the agent is starting", now)
     except Exception as exc:
-        return Data(empty_overview(), empty_inventory(), [], [], f"cannot read the store: {type(exc).__name__}", now)
+        return Data(empty_overview(), empty_inventory(), empty_assessment(), [], [], f"cannot read the store: {type(exc).__name__}", now)
     try:
-        return Data(build_overview(store), build_inventory(store), build_incidents(store, "open"), store.list_events(limit=300), "", now)
+        return Data(build_overview(store), build_inventory(store), build_assessment(store), build_incidents(store, "open"), store.list_events(limit=300), "", now)
     except Exception as exc:
-        return Data(empty_overview(), empty_inventory(), [], [], f"cannot read the store: {type(exc).__name__}", now)
+        return Data(empty_overview(), empty_inventory(), empty_assessment(), [], [], f"cannot read the store: {type(exc).__name__}", now)
     finally:
         store.close()
 
@@ -164,6 +167,14 @@ class Cockpit:
             for r in d.inventory.get("processes", []):
                 parts = [Seg(f"{r['pid']:<7}", "dim"), Seg(str(r.get("name", ""))[:15].ljust(16), None, True), Seg(str(r.get("command", "")), "dim")]
                 out.append((parts, f"{r.get('name', '')} {r.get('command', '')} {r['pid']}", r))
+        elif panel == "posture":
+            marks = {"fail": ("✖", "bad"), "warn": ("▲", "warn"), "unknown": ("?", "dim"), "info": ("i", "dim")}
+            for c in self.data.assessment.get("checks", []):
+                if c.get("state") not in marks:
+                    continue
+                mark, role = marks[c["state"]]
+                out.append(([Seg(mark + " ", role, True), Seg(str(c.get("title", "")), role if c["state"] in ("fail", "warn") else None, True), Seg("  " + str(c.get("area", "")), "dim")],
+                            f"{c.get('title', '')} {c.get('area', '')} {c.get('detail', '')}", c))
         q = self.query[panel].lower()
         if q:
             out = [r for r in out if q in r[1].lower()]
@@ -181,6 +192,9 @@ class Cockpit:
         inner_h, inner_w = max(0, height - 2), max(1, width - 4)
         first = 0 if sel < inner_h else sel - inner_h + 1
         title = [Seg(f"{PANELS.index(panel) + 1} ", "dim"), Seg(TITLES[panel], "accent" if focused else "brown", True)]
+        if panel == "posture" and self.data.assessment.get("score") is not None:
+            sc = self.data.assessment["score"]
+            title.append(Seg(f" {sc}/100", "ok" if sc >= 90 else "warn" if sc >= 70 else "bad", True))
         extra = f" {n}" + (f' /{self.query[panel]}' if self.query[panel] else "") + (" paused" if panel == "live" and self.paused_at is not None else "")
         title.append(Seg(extra, "dim"))
         t = fit(title, max(1, width - 6), g("ell"))
@@ -212,6 +226,8 @@ class Cockpit:
             return "Nothing needs your attention."
         if panel == "live":
             return "Quiet. Press r to include routine activity."
+        if panel == "posture":
+            return "Everything checked is fine." if self.data.assessment.get("checks") else "Checking this machine..."
         return "Waiting for the first look..."
 
     def _header(self, width: int) -> list[str]:
@@ -230,7 +246,9 @@ class Cockpit:
         act = [p["events"] for p in ov.get("activity", [])]
         srcs = ov.get("sources", [])
         ok = sum(1 for s in srcs if s.get("state") == "ok")
-        line = [Seg(" "), Seg(str(op.get("critical", 0)), "bad", True), Seg(" critical  "), Seg(str(op.get("total", 0)), "warn", True), Seg(" open  "),
+        sc = d.assessment.get("score")
+        health = [Seg(f"health {sc}/100  ", "ok" if sc >= 90 else "warn" if sc >= 70 else "bad", True)] if sc is not None else []
+        line = [Seg(" "), *health, Seg(str(op.get("critical", 0)), "bad", True), Seg(" critical  "), Seg(str(op.get("total", 0)), "warn", True), Seg(" open  "),
                 Seg(str(len(d.incidents)), None, True), Seg(" incidents  "), Seg(f"{ok}/{len(srcs)}", "ok" if ok == len(srcs) else "warn", True),
                 Seg(" sources  "), Seg(str(ov.get("events_24h", 0)), None, True), Seg(" events/24h  ", None), Seg(sparkline(act, 28), "accent")]
         return [l1, paint_segs(th, fit(_clean(line), width, th.glyph("ell")))]
@@ -274,8 +292,8 @@ class Cockpit:
             rw = cols - lw
             h1 = max(3, body_h * 2 // 5)
             left = self._box("incidents", lw, h1) + self._box("live", lw, body_h - h1)
-            a, b = max(3, body_h // 4), max(3, body_h // 4)
-            right = self._box("ports", rw, a) + self._box("connections", rw, b) + self._box("programs", rw, body_h - a - b)
+            q = max(3, body_h // 4)
+            right = self._box("posture", rw, q) + self._box("ports", rw, q) + self._box("connections", rw, q) + self._box("programs", rw, body_h - 3 * q)
             body = [l + r for l, r in zip(left, right)]
         else:
             tabs = [Seg(" ")]
@@ -318,7 +336,7 @@ class Cockpit:
             self.focus = (self.focus + 1) % len(PANELS)
         elif tok == "\x1b[Z":
             self.focus = (self.focus - 1) % len(PANELS)
-        elif tok in "12345" and len(tok) == 1:
+        elif tok in "123456" and len(tok) == 1:
             self.focus = int(tok) - 1
         elif tok in ("j", "\x1b[B", "\x1bOB"):
             self.sel[panel] = min(max(0, n - 1), self.sel[panel] + 1)
@@ -359,6 +377,8 @@ class Cockpit:
             self.close_incident()
         elif tok == "w":
             self.open_web()
+        elif tok == "a":
+            self.run_command("assess --all")
         elif tok == "R":
             self.elevate()
         elif tok == "\x1b":
@@ -459,6 +479,12 @@ class Cockpit:
         if panel == "programs":
             return str(item.get("name", "Program")), [f"Process id:   {item.get('pid')}", f"Parent id:    {item.get('ppid')}", f"User id:      {item.get('uid')}",
                                                       "", "Command:", f"  {item.get('command', '')}"]
+        if panel == "posture":
+            states = {"fail": "Needs fixing", "warn": "Worth a look", "unknown": "Could not check", "info": "For your information"}
+            lines = [str(item.get("title", "")), "", f"Result:   {states.get(item.get('state'), item.get('state'))}", f"Area:     {item.get('area')}", "", "What was found:", f"  {item.get('detail', '')}"]
+            if item.get("fix"):
+                lines += ["", "How to fix:", f"  {item['fix']}", "", "Erinix only looks. It never changes your system files."]
+            return "Health check", lines
         if panel == "live":
             return str(item.get("label", "Event")), [f"Time:         {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(float(item.get('ts', 0))))}",
                     f"What:         {item.get('summary', '')}", f"From:         {item.get('remote') or '-'}",

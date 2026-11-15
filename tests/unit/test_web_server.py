@@ -589,3 +589,25 @@ def test_inventory_endpoint_is_cleaned_and_needs_a_session(dash):
     data = json.loads(body)
     assert status == 200 and data["available"] and len(data["processes"]) == 400 and data["listening"] == []
     assert len(data["host"]["x"]) == 400 and len(data["processes"][0]["evil"]) <= 400
+
+
+def test_assessment_endpoint_is_cleaned_and_needs_a_session(dash):
+    assert call(dash, "GET", "/api/assessment")[0] == 401
+    with Store(dash.db_path) as st:
+        st.set_meta("assessment", {"at": 1.0, "score": 80, "verdict": "v" * 900, "counts": {"fail": 1}, "full_view": False,
+                                   "checks": [{"id": "a", "area": "x", "title": "t", "severity": "high", "state": "fail", "detail": "d" * 900, "fix": "f", "evil": "no"}] * 100})
+        token = st.create_login_token()
+    _, h, _ = login(dash, token)
+    cookie = h["set-cookie"].split(";")[0]
+    status, _, body = call(dash, "GET", "/api/assessment", headers={"Cookie": cookie})
+    data = json.loads(body)
+    assert status == 200 and data["score"] == 80 and len(data["checks"]) == 60 and len(data["verdict"]) == 400
+    assert "evil" not in data["checks"][0] and len(data["checks"][0]["detail"]) == 400
+
+
+def test_assessment_endpoint_without_data_says_not_checked(dash):
+    with Store(dash.db_path) as st:
+        token = st.create_login_token()
+    _, h, _ = login(dash, token)
+    status, _, body = call(dash, "GET", "/api/assessment", headers={"Cookie": h["set-cookie"].split(";")[0]})
+    assert status == 200 and json.loads(body)["score"] is None and json.loads(body)["checks"] == []

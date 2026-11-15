@@ -95,7 +95,7 @@ class AgentRuntime:
             store = self._store = Store(path=self.db_path) if self.db_path else Store()
             if store.get_meta("mode") != "live":
                 store.reset()
-            agent = self.agent = Agent(store, Recorder(store, Correlator(self.ruleset)), self.config, view=view)
+            agent = self.agent = Agent(store, Recorder(store, Correlator(self.ruleset)), self.config, view=view, assess=True)
             agent.privileged = self.mode == "full"
             agent.start()
         except Exception as exc:

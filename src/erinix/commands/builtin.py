@@ -249,6 +249,7 @@ def build_registry() -> Registry:
 
     for name, summary, usage, group, handler, words in (
         ("status", "What needs your attention, in plain language", "status [--json]", "Status", sc.cmd_status, ("--json",)),
+        ("assess", "Check how hard this machine is to attack", "assess [--all] [--json]", "Status", sc.cmd_assess, ("--all", "--json")),
         ("alerts", "List the alerts", "alerts [--all|--dismissed] [--json]", "Status", sc.cmd_alerts, ("--all", "--dismissed", "--json")),
         ("alert", "Explain one alert (add --tech for details)", "alert <n> [--tech] [--json]", "Status", sc.cmd_alert, ("--tech", "--json")),
         ("dismiss", "Hide an alert you have dealt with", "dismiss <n>", "Status", sc.cmd_dismiss, ()),

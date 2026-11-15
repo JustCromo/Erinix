@@ -21,6 +21,7 @@ from erinix.sensors.procfs import ProcessSensor
 
 INVENTORY_EVERY = 2.5
 PRUNE_EVERY = 600.0
+ASSESS_EVERY = 1800.0
 MAX_PROCESSES = 400
 
 
@@ -39,7 +40,7 @@ def _user() -> str:
 
 
 class Agent:
-    def __init__(self, store, recorder: Recorder, config: Config, *, proc: str = "/proc", clock: Callable[[], float] = time.time, view=None) -> None:
+    def __init__(self, store, recorder: Recorder, config: Config, *, proc: str = "/proc", clock: Callable[[], float] = time.time, view=None, assess: bool = False) -> None:
         self.store, self.recorder, self.config, self.clock = store, recorder, config, clock
         self.view = view                                   # None: look at /proc ourselves; else a privileged helper looks for us
         self.privileged = os.geteuid() == 0
@@ -51,6 +52,10 @@ class Agent:
         self._inventory_at = 0.0
         self._prune_at = clock()
         self._last_beat = 0.0
+        self.assess = assess                               # check the machine's posture now and every half hour (in a side thread)
+        self._assess_at = -1e9
+        self._assess_result: dict | None = None
+        self._assess_thread = None
         self.started = clock()
 
     # ------------------------------------------------------------ one look
@@ -87,7 +92,32 @@ class Agent:
         if now - self._prune_at >= PRUNE_EVERY:
             self._prune_at = now
             self.store.prune(now=now)
+        self._assessment(now)
         return len(batch)
+
+    def _assessment(self, now: float) -> None:
+        """The posture check reads many files, so it runs beside the loop; only this thread of the loop touches the store."""
+        if self._assess_result is not None:
+            try:
+                self.store.set_meta("assessment", self._assess_result)
+            except Exception:
+                pass
+            self._assess_result = None
+        if not self.assess or now - self._assess_at < ASSESS_EVERY or (self._assess_thread is not None and self._assess_thread.is_alive()):
+            return
+        self._assess_at = now
+        import threading
+
+        from erinix.assessment import Env, run_assessment
+
+        def work() -> None:
+            try:
+                self._assess_result = run_assessment(Env(full_view=self.privileged))
+            except Exception:
+                pass
+
+        self._assess_thread = threading.Thread(target=work, name="erinix-assess", daemon=True)
+        self._assess_thread.start()
 
     # ------------------------------------------------------------ what it sees
     def sources(self) -> list[dict]:

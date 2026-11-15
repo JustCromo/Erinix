@@ -30,6 +30,11 @@ def store_path(tmp_path):
                                  "process_total": 1,
                                  "listening": [{"local": "0.0.0.0:22", "port": 22, "pid": None, "program": "", "uid": 0, "exposed": True}],
                                  "connections": [{"local": "1.1.1.1:5", "port": 5, "pid": 7, "program": "curl", "uid": 1, "remote": "9.9.9.9:443", "external": True}]})
+    from erinix.assessment import Env, run_assessment
+    store.set_meta("assessment", {"at": now, "score": 62, "verdict": "x", "counts": {}, "full_view": False, "checks": [
+        {"id": "ssh.root_login", "area": "Remote access", "title": "Root cannot log in over SSH", "severity": "high", "state": "fail",
+         "detail": "SSH lets root log in directly.\x1b[31m", "fix": "Set PermitRootLogin to no."},
+        {"id": "x", "area": "System", "title": "Fine thing", "severity": "low", "state": "ok", "detail": "ok", "fix": ""}]})
     store.close()
     return path
 
@@ -52,7 +57,7 @@ def test_wide_layout_shows_all_panels(store_path):
     c = make(store_path)
     c.refresh(True)
     text = "\n".join(c.render())
-    for title in ("Incidents", "Live", "Open ports", "Connections", "Programs"):
+    for title in ("Incidents", "Live", "Open ports", "Connections", "Programs", "Health"):
         assert title in text
     assert "unknown program" in text and ":22" in text
 
@@ -160,3 +165,15 @@ def test_unchanged_screen_is_not_repainted(store_path):
     first = c.out.getvalue()
     c.draw()
     assert c.out.getvalue() == first
+
+
+def test_health_panel_lists_only_what_needs_attention_and_shows_the_fix(store_path):
+    c = make(store_path)
+    c.refresh(True)
+    rows = c.rows("posture")
+    assert len(rows) == 1 and "Root cannot log in" in rows[0][1]
+    assert "62/100" in "\n".join(c.render())
+    c.handle("6")
+    c.handle("\r"); c.handle("\r")
+    text = "\n".join(c.overlay)
+    assert "How to fix" in text and "PermitRootLogin" in text and "\x1b" not in text

@@ -710,3 +710,40 @@ def cmd_uninstall_app(ctx: Context, args: list[str]) -> int:
     for path in removed:
         ctx.line(Seg("  " + str(path), "dim"))
     return 0
+
+
+# ----------------------------------------------------------------------- assess
+def cmd_assess(ctx: Context, args: list[str]) -> int:
+    """Check how hard this machine is to attack. Read-only: it only looks, and says how to fix what it finds."""
+    from erinix.assessment import Env, run_assessment
+
+    _, flags, _ = parse_args(args, flags=("--all", "--json"), max_positional=0)
+    result = run_assessment(Env())
+    try:                                              # let the cockpit and the dashboard show the same result
+        store = Store()
+        try:
+            store.set_meta("assessment", result)
+        finally:
+            store.close()
+    except Exception:
+        pass
+    if "--json" in flags:
+        _json(ctx, result)
+        return 0
+    c = result["counts"]
+    role = "ok" if result["score"] >= 90 else "warn" if result["score"] >= 70 else "bad"
+    ctx.line(Seg(f"Score {result['score']}/100", role, True), Seg("  " + result["verdict"]))
+    ctx.line(Seg(f"{c['fail']} to fix  {c['warn']} to look at  {c['unknown']} unknown  {c['ok']} fine", "dim"))
+    ctx.say("")
+    shown = [r for r in result["checks"] if "--all" in flags or r["state"] in ("fail", "warn", "unknown", "info")]
+    marks = {"fail": ("x", "bad"), "warn": ("!", "warn"), "unknown": ("?", "dim"), "info": ("i", "dim"), "ok": ("v", "ok"), "na": ("-", "dim")}
+    for r in shown:
+        mark, role = marks[r["state"]]
+        ctx.line(Seg(mark + " ", role, True), Seg(r["title"], None, True), Seg("  " + r["area"], "dim"))
+        ctx.line(Seg("    " + r["detail"], "dim"))
+        if r["fix"]:
+            ctx.line(Seg("    Fix: ", "accent"), Seg(r["fix"]))
+    if not shown:
+        ctx.line(Seg(ctx.theme.glyph("ok") + " ", "ok", True), Seg("Everything checked is fine."))
+    _hint(ctx, Seg("assess --all", "accent"), Seg(" lists the checks that passed too.", "dim"))
+    return 0

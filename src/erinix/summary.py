@@ -156,6 +156,18 @@ def empty_inventory() -> dict:
     return {"available": False, "host": {}, "processes": [], "process_total": 0, "listening": [], "connections": [], "at": None}
 
 
+def build_assessment(store: Store) -> dict:
+    """The latest posture check (written by the agent), cleaned for display."""
+    from erinix.assessment import empty_assessment
+
+    raw = store.get_meta("assessment", None)
+    if not isinstance(raw, dict) or not isinstance(raw.get("checks"), list):
+        return empty_assessment()
+    out = {k: _clean(raw.get(k)) for k in ("at", "score", "verdict", "counts", "full_view")}
+    out["checks"] = [_clean({k: c.get(k, "") for k in ("id", "area", "title", "severity", "state", "detail", "fix")}) for c in raw["checks"][:60] if isinstance(c, dict)]
+    return out
+
+
 def build_inventory(store: Store) -> dict:
     """What the agent sees on the machine right now: host, programs, listening ports, connections."""
     raw = store.get_meta("inventory", None)

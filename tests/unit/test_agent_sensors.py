@@ -342,3 +342,42 @@ def test_agent_isolates_a_broken_source(tmp_path):
     assert store.get_meta("inventory")["host"]["name"]
     result = agent.run(duration=0.2, sleep=lambda s: time.sleep(0.01))
     assert result["events"] == 1
+
+
+def test_agent_publishes_the_posture_check_from_a_side_thread(tmp_path, monkeypatch):
+    import time as _t
+
+    from erinix import assessment
+    from erinix.commands.builtin import default_rules_path
+    from erinix.engine import Correlator
+    from erinix.recorder import Recorder
+    from erinix.rules import load_rules
+    from erinix.store import Store
+
+    monkeypatch.setattr(assessment, "run_assessment", lambda env=None, checks=assessment.CHECKS: {"score": 77, "checks": [], "verdict": "v", "counts": {}, "at": 1.0, "full_view": False})
+    store = Store(tmp_path / "e.db")
+    agent = Agent(store, Recorder(store, Correlator(load_rules(default_rules_path(None)))), cfg.Config(processes=False, network=False), proc=str(tmp_path), assess=True)
+    agent.start()
+    agent.step()
+    for _ in range(50):
+        if agent._assess_result is not None:
+            break
+        _t.sleep(0.02)
+    agent.step()
+    assert store.get_meta("assessment")["score"] == 77
+    agent.close()
+
+
+def test_agent_without_assess_never_checks(tmp_path):
+    from erinix.commands.builtin import default_rules_path
+    from erinix.engine import Correlator
+    from erinix.recorder import Recorder
+    from erinix.rules import load_rules
+    from erinix.store import Store
+
+    store = Store(tmp_path / "e.db")
+    agent = Agent(store, Recorder(store, Correlator(load_rules(default_rules_path(None)))), cfg.Config(processes=False, network=False), proc=str(tmp_path))
+    agent.start()
+    agent.step()
+    assert agent._assess_thread is None and store.get_meta("assessment") is None
+    agent.close()
