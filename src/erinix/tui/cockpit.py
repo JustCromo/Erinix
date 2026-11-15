@@ -25,19 +25,45 @@ ROUTINE = ("process.exec", "net.connect", "net.accept", "net.listen")
 REFRESH = 1.0
 SEV_ROLE = {"critical": "bad", "high": "bad", "medium": "warn", "low": "dim"}
 HELP = [
-    "Tab / Shift-Tab  move between panels          1-6  jump to a panel",
-    "Up / Down  select a row (j also goes down)    PgUp / PgDn  scroll faster",
-    "Enter  fill the screen with the panel, then open a row   Esc / q  go back",
-    "/  search in the panel (Esc clears)            x  close the selected incident",
-    "r  show or hide routine activity               p  pause or resume the live feed",
-    ":  type a command (alerts, status, help...)    s  what Erinix is watching",
-    "w  open the web dashboard                      R  see every program (asks for your sudo password)",
-    "a  check this machine now (Health panel)       Health panel: Enter on a row shows how to fix it",
-    "b  block the address of the selected incident/event/connection (asks first)",
-    "k  stop the selected program (asks first)      f  fix the selected Health finding (asks first)",
-    ":undo N  reverse a block or fix                 :actions  what Erinix has done",
-    "?  this help                                   q  quit",
+    "WHERE DO I TYPE?",
+    "  Press  :  then type a command and press Enter. Examples:",
+    "      assess              check how hard this machine is to attack",
+    "      block 203.0.113.50  block an address for an hour (asks first)",
+    "      kill 4242           stop a program (numbers are in panel 6)",
+    "      actions             what Erinix has done      undo 3   reverse it",
+    "      help                every command",
+    "  You rarely need to type: select a row and use the keys below.",
+    "",
+    "MOVING",
+    "  Tab / Shift-Tab or 1-6   change panel      Up / Down (j)   select a row     PgUp / PgDn   faster",
+    "  Enter   panel full screen, then open the row      Esc or q   go back      /   search in the panel",
+    "",
+    "A TYPICAL CHECK",
+    "  1. Press 3 (Health): the list of things to look at, with the score.",
+    "  2. Enter twice on a row: what was found and how to fix it.",
+    "  3. If it says Erinix can fix it, press f on the row: you see the exact changes, and y confirms.",
+    "  4. Press a to check again.",
+    "",
+    "WHEN AN ATTACK SHOWS UP",
+    "  1. Panel 1 (Incidents): Enter twice to read what happened and what to do.",
+    "  2. b  block the attacker's address (an hour, then it lifts by itself)     x  close the incident when done.",
+    "  3. Panel 6 (Programs): k stops a program you do not trust.",
+    "  Nothing is ever done without a box showing what will happen and you pressing y.",
+    "",
+    "OTHER KEYS",
+    "  r  routine activity on/off     p  pause the live feed     s  what Erinix is watching",
+    "  w  web dashboard (opens the browser)     R  see every program (asks for your sudo password)     q  quit",
 ]
+
+# the keys that matter in each panel, shown at the bottom of the screen
+CONTEXT_KEYS = {
+    "incidents": [("Enter", "read it"), ("b", "block its address"), ("x", "close it")],
+    "live": [("Enter", "details"), ("b", "block address"), ("r", "routine"), ("p", "pause")],
+    "posture": [("Enter", "how to fix"), ("f", "fix it"), ("a", "check again")],
+    "ports": [("Enter", "details"), ("k", "stop its program")],
+    "connections": [("Enter", "details"), ("b", "block address"), ("k", "stop program")],
+    "programs": [("Enter", "details"), ("k", "stop it"), ("/", "search")],
+}
 
 
 @dataclass
@@ -272,10 +298,31 @@ class Cockpit:
         else:
             row = [Seg(" " + (self.flash or self._status()), "warn" if self.flash else "dim")]
             hint = []
-        keys = [Seg(" Tab", "accent", True), Seg(" panel  "), Seg("Enter", "accent", True), Seg(" open  "), Seg("/", "accent", True), Seg(" search  "),
-                Seg(":", "accent", True), Seg(" command  "), Seg("r", "accent", True), Seg(" routine  "), Seg("p", "accent", True), Seg(" pause  "),
-                Seg("w", "accent", True), Seg(" web  "), Seg("?", "accent", True), Seg(" help  "), Seg("q", "accent", True), Seg(" quit")]
+        if self.mode == "command":
+            keys = self._suggestions()
+        elif self.mode == "confirm":
+            keys = []
+        elif self.mode == "overlay":
+            keys = [Seg(" Esc", "accent", True), Seg(" or "), Seg("q", "accent", True), Seg(" go back   "), Seg("Up / Down", "accent", True), Seg(" scroll")]
+        else:
+            keys = [Seg(" ")]
+            for key, label in CONTEXT_KEYS[PANELS[self.focus]] + [("Tab", "next panel"), (":", "type a command"), ("?", "guide"), ("q", "quit")]:
+                keys += [Seg(key, "accent", True), Seg(f" {label}  ")]
         return [paint_segs(th, fit(_clean([*row, *hint]), width, th.glyph("ell"))), paint_segs(th, fit(keys, width, th.glyph("ell")))]
+
+    def _suggestions(self) -> list[Seg]:
+        """While typing a command: the commands that match, or the usage of the one typed."""
+        if self.registry is None:
+            return [Seg(" no commands here", "dim")]
+        text = self.buffer.strip().lower()
+        cmds = [c for c in self.registry.commands if c.name not in ("watch", "serve", "demo", "exit", "quit")]
+        first = ["assess", "block", "kill", "fix", "actions", "undo", "alerts", "status", "help"]
+        cmds.sort(key=lambda c: first.index(c.name) if c.name in first else len(first))     # the useful ones first
+        exact = next((c for c in cmds if text == c.name or text.startswith(c.name + " ")), None)
+        if exact is not None:
+            return [Seg(" " + exact.usage, "accent", True), Seg("   " + exact.summary, "dim")]
+        names = [c.name for c in cmds if c.name.startswith(text.split(" ")[0])] if text else [c.name for c in cmds]
+        return [Seg(" ", "dim"), *[Seg(n + "  ", "accent") for n in names[:14]]] if names else [Seg(" no command starts like that: type help", "dim")]
 
     def _status(self) -> str:
         rt = self.runtime
@@ -289,7 +336,7 @@ class Cockpit:
             unknown = sum(1 for r in self.data.inventory.get("listening", []) if not r.get("program"))
             if unknown:
                 return f"{unknown} ports show 'unknown program': press R to see every program"
-        return ""
+        return "Press ? for the guide, or : to type a command"
 
     def render(self) -> list[str]:
         cols, rows = self.size_fn()

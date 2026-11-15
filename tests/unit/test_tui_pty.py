@@ -117,7 +117,7 @@ def test_bare_erinix_starts_watching_and_shows_the_cockpit(tmp_path):
     plain = t.strip_ansi(s.buf)
     assert "Incidents" in plain and "Connections" in plain
     s.send("?")
-    assert s.wait_for("Tab / Shift-Tab")
+    assert s.wait_for("WHERE DO I TYPE")
     s.send("q")
     s.send("q")
     assert s.finish() == 0

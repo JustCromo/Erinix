@@ -265,3 +265,45 @@ def test_every_line_still_fits_in_confirm_mode(store_path):
     c.handle("1"); c.handle("b")
     from erinix.tui.terminal import visible_width
     assert all(visible_width(l) <= 140 for l in c.render())
+
+
+def test_footer_shows_the_keys_of_the_focused_panel(store_path):
+    c = make(store_path)
+    c.refresh(True)
+    assert "block its address" in c.render()[-1]
+    c.handle("3")
+    assert "how to fix" in c.render()[-1] and "fix it" in c.render()[-1]
+    c.handle("6")
+    assert "stop it" in c.render()[-1]
+    assert "guide" in c.render()[-1]
+
+
+def test_typing_a_command_suggests_commands_and_shows_usage(store_path):
+    c = make(store_path)
+    c.refresh(True)
+    c.handle(":")
+    assert "assess" in c.render()[-1] and "block" in c.render()[-1]
+    for ch in "bl":
+        c.handle(ch)
+    last = c.render()[-1]
+    assert "block" in last and "alerts" not in last
+    for ch in "ock ":
+        c.handle(ch)
+    assert "block <ip>" in c.render()[-1] and "--minutes" in c.render()[-1]
+    c.handle("\x1b")
+    assert "guide" in c.render()[-1]
+
+
+def test_the_guide_explains_where_to_type(store_path):
+    c = make(store_path)
+    c.refresh(True)
+    c.handle("?")
+    text = "\n".join(c.overlay)
+    assert "WHERE DO I TYPE" in text and "Press  :" in text and "block 203.0.113.50" in text and "assess" in text
+    assert "Esc" in c.render()[-1]
+
+
+def test_the_status_line_points_to_the_guide(store_path):
+    c = make(store_path)
+    c.refresh(True)
+    assert "? for the guide" in c.render()[-2]
