@@ -18,6 +18,7 @@ from erinix.core.events import Event
 from erinix.recorder import Recorder
 from erinix.sensors.netproc import NetworkSensor
 from erinix.sensors.procfs import ProcessSensor
+from erinix.sensors.scanwatch import ScanSensor
 
 INVENTORY_EVERY = 2.5
 PRUNE_EVERY = 600.0
@@ -46,6 +47,7 @@ class Agent:
         self.privileged = os.geteuid() == 0
         self.processes = ProcessSensor(proc, view) if config.processes else None
         self.network = NetworkSensor(self.processes, proc, view=view) if config.network and self.processes else None
+        self.scans = ScanSensor(view, privileged=self.privileged) if config.network else None
         self.logs = [spec.build() for spec in config.sources]
         self.events = 0
         self.alerts = 0
@@ -63,7 +65,7 @@ class Agent:
     def step(self) -> int:
         """Look once at everything. Returns how many events were handled."""
         batch: list[Event] = []
-        for eyes in (self.processes, self.network, *self.logs):
+        for eyes in (self.processes, self.network, self.scans, *self.logs):
             if eyes is None:
                 continue
             try:
@@ -145,6 +147,8 @@ class Agent:
         if self.network is not None:
             rows.append({"name": self.network.name, "state": "blind" if self.network.error else "ok",
                          "detail": self.network.error or ("all users" if self.privileged else "your own programs only (press R in the console to see all)")})
+        if self.scans is not None:
+            rows.append(self.scans.status())
         rows.extend(log.status() for log in self.logs)
         return rows
 
@@ -179,6 +183,8 @@ class Agent:
         return {"events": self.events, "alerts": self.alerts}
 
     def close(self) -> None:
+        if self.scans is not None:
+            self.scans.close()
         for log in self.logs:
             log.close()
 

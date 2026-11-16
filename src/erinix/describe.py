@@ -32,6 +32,9 @@ def describe(event: Event) -> tuple[str, str, str | None]:
     where = None if remote is None else str(remote)
     if t is EventType.WEB_REQUEST:
         return "Web request", _line(f"{payload.method} {payload.target.value} → {payload.status}"), where
+    if t is EventType.SCAN_DETECTED:
+        sample = ", ".join(str(n) for n in payload.ports[:8])
+        return "Port scan", _line(f"{payload.remote_addr} touched {payload.port_count} ports ({sample}…)" if payload.port_count > 8 else f"{payload.remote_addr} touched {payload.port_count} ports ({sample})"), where
     if t is EventType.AUTH_FAILURE:
         return "Login failed", _line(f"{payload.user.value} via {payload.service.value}"), where
     if t is EventType.AUTH_SUCCESS:

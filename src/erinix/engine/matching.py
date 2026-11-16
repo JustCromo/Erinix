@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
-from erinix.core.events import AuthInfo, Event, FileInfo, NetInfo, PrivInfo, ProcessInfo, WebInfo
+from erinix.core.events import AuthInfo, Event, FileInfo, NetInfo, PrivInfo, ProcessInfo, ScanInfo, WebInfo
 from erinix.core.process_tree import ProcessTree
 
 _Check = Callable[[Any, "ProcessInfo | None", Any, ProcessTree], bool]
@@ -58,6 +58,7 @@ _CHECKS: dict[str, _Check] = {
     "contains": lambda w, p, pl, t: isinstance(pl, WebInfo) and any(s in pl.decoded for s in w),
     "user_agent_contains": lambda w, p, pl, t: isinstance(pl, WebInfo) and any(s in pl.agent for s in w),
     "status": lambda w, p, pl, t: isinstance(pl, WebInfo) and pl.status in w,
+    "kind": lambda w, p, pl, t: isinstance(pl, ScanInfo) and pl.kind in w,
     "operation": lambda w, p, pl, t: isinstance(pl, FileInfo) and pl.operation in w,
     "service": lambda w, p, pl, t: isinstance(pl, AuthInfo) and pl.service.value in w,
 }

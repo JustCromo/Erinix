@@ -53,6 +53,7 @@ class EventType(str, Enum):
     SENSOR_MODE = "sensor.mode"
     SENSOR_EVENTS_LOST = "sensor.events_lost"
     WEB_REQUEST = "web.request"
+    SCAN_DETECTED = "scan.detected"
 
     @property
     def family(self) -> str:
@@ -72,6 +73,7 @@ CRITICAL_TYPES = frozenset(
         EventType.SENSOR_STOPPED,
         EventType.SENSOR_MODE,
         EventType.SENSOR_EVENTS_LOST,
+        EventType.SCAN_DETECTED,
     }
 )
 
@@ -306,7 +308,36 @@ class WebInfo:
         return self.decoded.split("?", 1)[0]
 
 
-Payload = Union[NetInfo, PrivInfo, FileInfo, AuthInfo, SensorInfo, WebInfo]
+SCAN_KINDS = ("fast", "slow", "wide")
+MAX_SCAN_PORTS = 16
+
+
+@dataclass(frozen=True, slots=True)
+class ScanInfo:
+    """Someone knocked on many different ports of this machine (seen as packets, not as connections)."""
+
+    remote_addr: ipaddress.IPv4Address | ipaddress.IPv6Address
+    protocol: str
+    kind: str                       # fast: many ports in seconds; slow: many ports over minutes; wide: a hundred or more
+    port_count: int                 # different ports touched so far
+    ports: tuple[int, ...]          # a sample, at most MAX_SCAN_PORTS
+
+    @classmethod
+    def build(cls, *, remote_addr, kind: str, port_count: int, ports=(), protocol: str = "tcp") -> "ScanInfo":
+        addr = _ip(remote_addr)
+        if addr is None or addr.is_loopback or addr.is_unspecified or addr.is_multicast:
+            raise ValueError("invalid scan source")
+        if kind not in SCAN_KINDS:
+            raise ValueError(f"invalid scan kind: {kind!r}")
+        if protocol != "tcp":
+            raise ValueError(f"unsupported protocol: {protocol!r}")
+        if isinstance(port_count, bool) or not isinstance(port_count, int) or not 1 <= port_count <= 65536:
+            raise ValueError("invalid port count")
+        sample = tuple(sorted({_port(p) for p in list(ports)[:MAX_SCAN_PORTS] if p is not None}))
+        return cls(addr, protocol, kind, port_count, sample)
+
+
+Payload = Union[NetInfo, PrivInfo, FileInfo, AuthInfo, SensorInfo, WebInfo, ScanInfo]
 
 _PAYLOAD_BY_FAMILY: dict[str, type | None] = {
     "process": None,
@@ -316,6 +347,7 @@ _PAYLOAD_BY_FAMILY: dict[str, type | None] = {
     "auth": AuthInfo,
     "sensor": SensorInfo,
     "web": WebInfo,
+    "scan": ScanInfo,
 }
 
 _PROCESS_REQUIRED = frozenset({"process", "priv", "net", "file"})

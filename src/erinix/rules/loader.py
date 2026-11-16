@@ -22,7 +22,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from erinix.core.events import FILE_OPERATIONS, EventType
+from erinix.core.events import FILE_OPERATIONS, SCAN_KINDS, EventType
 from erinix.core.webnorm import normalize_target
 
 SCHEMA_VERSION = 1
@@ -85,15 +85,16 @@ MATCH_FIELDS: Mapping[EventType, Mapping[str, str]] = MappingProxyType({
     EventType.AUTH_SUCCESS: {"service": _STR},
     EventType.WEB_REQUEST: {"contains": _STR, "user_agent_contains": _STR, "method": _STR,
                             "status": _INT, "path": _STR, "path_prefix": _STR, "path_not": _STR},
+    EventType.SCAN_DETECTED: {"kind": _STR},
 })
 
 _ABSOLUTE_FIELDS = frozenset({"exe", "exe_not", "parent_exe", "ancestor_exe", "path",
                               "exe_prefix", "path_prefix", "path_not"})
 
 _REMOTE_IP_EVENTS = frozenset({EventType.NET_CONNECT, EventType.NET_ACCEPT, EventType.AUTH_FAILURE,
-                               EventType.AUTH_SUCCESS, EventType.WEB_REQUEST})
+                               EventType.AUTH_SUCCESS, EventType.WEB_REQUEST, EventType.SCAN_DETECTED})
 _AUTH_EVENTS = frozenset({EventType.AUTH_FAILURE, EventType.AUTH_SUCCESS})
-_NO_PROCESS_EVENTS = _AUTH_EVENTS | {EventType.WEB_REQUEST}     # events with no process attached
+_NO_PROCESS_EVENTS = _AUTH_EVENTS | {EventType.WEB_REQUEST, EventType.SCAN_DETECTED}     # events with no process attached
 _WEB_TEXT_FIELDS = frozenset({"contains", "user_agent_contains", "path", "path_prefix", "path_not"})
 MIN_SUBSTRING = 3          # shorter substrings would match almost everything
 
@@ -247,6 +248,8 @@ def _parse_match(event: EventType, raw: object, where: str) -> Mapping[str, Any]
             items = _str_list(value, w)
             if key in _ABSOLUTE_FIELDS and not all(i.startswith("/") for i in items):
                 raise RuleError(f"{w}: absolute paths required (starting with '/')")
+            if key == "kind" and not set(items) <= set(SCAN_KINDS):
+                raise RuleError(f"{w}: allowed kinds: {', '.join(SCAN_KINDS)}")
             if key == "operation" and not set(items) <= FILE_OPERATIONS:
                 raise RuleError(f"{w}: allowed operations: {', '.join(sorted(FILE_OPERATIONS))}")
             if event is EventType.WEB_REQUEST:

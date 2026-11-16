@@ -1,0 +1,40 @@
+schema = 1
+
+# Someone knocks on many different ports of this machine. Seen as packets: a scan opens no connection.
+[[indicator]]
+id = "port-scan"
+tag = "Scanning"
+area = "this machine"
+title = "Someone is scanning the ports of this machine ({remote})"
+why = "One address tried many different ports in a short time. This is how an attacker looks for open doors (for example with nmap) before choosing what to attack."
+next = [
+  "Check that only the ports you expect are open (panel 4)",
+  "If {remote} is not a machine you know, block it",
+  "Look at the other alerts from {remote}",
+]
+description = "One remote address sent connection attempts to many different ports."
+mitre = ["T1046"]
+event = "scan.detected"
+severity = "medium"
+response = "interactive"
+[indicator.match]
+kind = ["fast", "slow"]
+
+[[indicator]]
+id = "port-scan-wide"
+tag = "Scanning"
+area = "this machine"
+title = "Someone is scanning a very large number of ports ({remote})"
+why = "One address tried a hundred or more different ports. This is a full scan, not a mistake or a normal program."
+next = [
+  "Block {remote} unless it is a machine you know",
+  "Check that only the ports you expect are open (panel 4)",
+  "Look at the other alerts from {remote}",
+]
+description = "One remote address sent connection attempts to a hundred or more different ports."
+mitre = ["T1046"]
+event = "scan.detected"
+severity = "high"
+response = "interactive"
+[indicator.match]
+kind = ["wide"]

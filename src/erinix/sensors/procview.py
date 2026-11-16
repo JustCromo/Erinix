@@ -98,6 +98,26 @@ def decode_snapshot(line: str) -> tuple[dict[int, ProcRecord], list[Socket], dic
         return None
 
 
+def decode_scan(line: str):
+    """One port scan seen by the helper. The source is a packet's address: checked like any other untrusted text."""
+    from erinix.core.events import SCAN_KINDS
+    from erinix.sensors.scanwatch import Detection
+
+    try:
+        d = json.loads(line)
+        src = _text(d["src"], 64)
+        ipaddress.ip_address(src)
+        if d["kind"] not in SCAN_KINDS or not isinstance(d["ports"], list) or len(d["ports"]) > 16:
+            raise ValueError("bad scan")
+        return Detection(src, d["kind"], _int(d["count"], 1, 65536), tuple(_int(p, 1, 65535) for p in d["ports"]))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def encode_scan(found) -> str:
+    return json.dumps({"t": "scan", "src": found.src, "kind": found.kind, "count": found.port_count, "ports": list(found.ports)}, separators=(",", ":"))
+
+
 STATES_OK = ("ok", "warn", "fail", "unknown", "info", "na")
 SEVERITIES = ("high", "medium", "low")
 ASSESS_EVERY = 300.0
@@ -147,6 +167,9 @@ class RemoteView:
         self.closed = False
         self.bad_lines = 0
         self.assessment: dict | None = None
+        self.scan_state, self.scan_detail = "off", "waiting for the root helper"
+        self._scans: list = []
+        self._scans_lock = threading.Lock()
         self.results: dict[int, dict] = {}
         self.result_ready = threading.Condition()
         self.nudge: Callable[[], None] | None = None     # asks the helper to look again now
@@ -181,11 +204,22 @@ class RemoteView:
                     else:
                         self.assessment = got
                     continue
+                if line.startswith('{"t":"scan"'):
+                    got = decode_scan(line)
+                    if got is None:
+                        self.bad_lines += 1
+                    else:
+                        with self._scans_lock:
+                            if len(self._scans) < 256:
+                                self._scans.append(got)
+                    continue
                 if line.startswith('{"t":"hello"'):
                     try:
                         hello = json.loads(line)
                         self.privileged = hello.get("uid") == 0
                         self.note = _text(hello.get("note", ""), 300)
+                        if hello.get("scan") in ("ok", "blind", "off"):
+                            self.scan_state, self.scan_detail = hello["scan"], _text(hello.get("scan_detail", ""), 200)
                     except (ValueError, TypeError):
                         self.bad_lines += 1
                     continue
@@ -215,6 +249,11 @@ class RemoteView:
     def owners(self) -> dict[int, int]:
         got = self._fresh()
         return got[3] if got else {}
+
+    def drain_scans(self) -> list:
+        with self._scans_lock:
+            out, self._scans = self._scans, []
+        return out
 
     @property
     def has_data(self) -> bool:
@@ -259,7 +298,8 @@ def handle_action(msg: dict) -> str:
 
 
 def helper_main(out: TextIO | None = None, *, interval: float = 0.5, proc: str = "/proc", stop: Callable[[], bool] = lambda: False,
-                sleep: Callable[[float], None] = time.sleep, stdin: TextIO | None = None, assess: bool = True) -> int:
+                sleep: Callable[[float], None] = time.sleep, stdin: TextIO | None = None, assess: bool = True,
+                watcher=None) -> int:
     """Send a snapshot of /proc every `interval` seconds until the reader goes away."""
     out = sys.stdout if out is None else out
     view = LocalView(proc)
@@ -287,8 +327,15 @@ def helper_main(out: TextIO | None = None, *, interval: float = 0.5, proc: str =
             gone.set()
         threading.Thread(target=watch, daemon=True).start()
     parent = os.getppid()
+    if watcher is None and os.geteuid() == 0:                 # packets can only be listened to as root
+        from erinix.sensors.scanwatch import ScanWatcher, local_addresses
+
+        watcher = ScanWatcher(ignore=local_addresses())
+    if watcher is not None:
+        watcher.start()
+    scan_state, scan_detail = (watcher.state, watcher.detail) if watcher is not None else ("off", "not running as root")
     try:
-        out.write(json.dumps({"t": "hello", "uid": os.geteuid(), "version": __version__, "note": note}, separators=(",", ":")) + "\n")
+        out.write(json.dumps({"t": "hello", "uid": os.geteuid(), "version": __version__, "note": note, "scan": scan_state, "scan_detail": scan_detail}, separators=(",", ":")) + "\n")
         out.flush()
         owners: dict[int, int] = {}
         owners_at = assessed_at = -1e9
@@ -304,6 +351,9 @@ def helper_main(out: TextIO | None = None, *, interval: float = 0.5, proc: str =
                     out.write(encode_assessment(run_assessment(Env(proc=proc, full_view=True))) + "\n")
                 except Exception:
                     pass
+            if watcher is not None:
+                for found in watcher.drain():
+                    out.write(encode_scan(found) + "\n")
             socks = view.sockets()
             if began - owners_at >= OWNERS_EVERY:
                 owners, owners_at = view.owners(), began
@@ -312,6 +362,9 @@ def helper_main(out: TextIO | None = None, *, interval: float = 0.5, proc: str =
             sleep(max(0.0, interval - (time.monotonic() - began)))
     except (BrokenPipeError, ValueError):
         pass
+    finally:
+        if watcher is not None:
+            watcher.stop()
     return 0
 
 

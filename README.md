@@ -112,6 +112,17 @@ In the cockpit: `Tab` moves between panels, `Enter` opens a row, `/` searches, `
 `R` raises the view to every program (sudo password), `?` shows all keys. Only one Erinix watches at a time; a second
 one opens as a viewer of the same data.
 
+## Port scans
+
+A scan (for example `nmap`) knocks on many ports and almost never finishes a connection, so it leaves nothing in
+`/proc`. With root (`erinix --elevate`, or `R` in the cockpit) Erinix also listens to incoming packets and raises an
+incident when one address touches many **different** ports: 10 in 10 seconds (fast), 25 in 5 minutes (slow), or 100
+or more (wide, high severity). It sees the packets before the firewall, so closed ports count too, even if only
+one port is open. Counted as probes: SYN-only packets (the usual scan and connect scan) and the null, FIN and Xmas
+scans. Not counted: ACK scans, UDP scans, and traffic from this machine itself or from loopback. Without root the
+detector is off, and `status` says so. The source address of a scan can be forged: an incident is a signal, and
+blocking (`b`) always asks first.
+
 ## Health check (assessment)
 
 ```
