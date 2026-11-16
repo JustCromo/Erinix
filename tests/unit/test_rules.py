@@ -236,3 +236,15 @@ def test_group_writable_rules_explain_how_to_fix_them(tmp_path):
     assert "chmod -R go-w" in str(err.value)
     os.chmod(rules, 0o755)
     assert load_rules(rules).problems == ()
+
+
+def test_group_writable_rules_explain_how_to_fix_them(tmp_path):
+    from erinix.rules import RuleError, load_rules
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    os.chmod(rules, 0o775)
+    with pytest.raises(RuleError) as err:
+        load_rules(rules)
+    assert "chmod -R go-w" in str(err.value)
+    os.chmod(rules, 0o755)
+    assert load_rules(rules).problems == ()
