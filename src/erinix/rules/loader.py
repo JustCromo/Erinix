@@ -392,7 +392,7 @@ def _parse_indicator(raw: dict) -> Indicator:
 # ------------------------------------------------------- file security
 def _check_stat(st: os.stat_result, what: str) -> None:
     if st.st_mode & 0o022:
-        raise RuleError(f"{what} is writable by group or others: rejected")
+        raise RuleError(f"{what} is writable by group or others: rejected (fix: chmod -R go-w on the rules folder; some systems, like Ubuntu, create group-writable folders by default)")
     if st.st_uid not in (0, os.geteuid()):
         raise RuleError(f"{what} has an untrusted owner (uid {st.st_uid}): rejected")
 
