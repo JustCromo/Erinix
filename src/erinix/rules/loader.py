@@ -145,6 +145,7 @@ class Indicator:
     next_steps: tuple[str, ...] = ()
     tag: str = ""
     area: str = ""
+    repeat_after: int = 300               # seconds before the same source can raise this rule again
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,16 +380,19 @@ def _parse_indicator(raw: dict) -> Indicator:
     rule_id = _ident(raw, "indicator")
     where = f"indicator {rule_id}"
     _check_keys(raw, {"id", "description", "mitre", "event", "severity", "response",
-                      "justification", "match", "title", "why", "next", "tag", "area"}, where)
+                      "justification", "match", "title", "why", "next", "tag", "area", "repeat_after"}, where)
     description, mitre = _common(raw, where)
     title, why, next_steps, tag, area = _human(raw, where)
+    repeat = raw.get("repeat_after", 300)
+    if isinstance(repeat, bool) or not isinstance(repeat, int) or not 10 <= repeat <= 86400:
+        raise RuleError(f"{where}: 'repeat_after' must be an integer from 10 to 86400 (seconds)")
     event = _enum(EventType, raw.get("event"), where, "event")
     severity = _enum(Severity, raw.get("severity"), where, "severity")
     response = Response.REPORT_ONLY if "response" not in raw else _enum(Response, raw["response"], where, "response")
     match = _parse_match(event, raw.get("match"), where)
     justification = _justification(raw, where, response is Response.AUTO)
     return Indicator(rule_id, description, mitre, event, severity, response, justification, match,
-                     title, why, next_steps, tag, area)
+                     title, why, next_steps, tag, area, repeat)
 
 
 # ------------------------------------------------------- file security

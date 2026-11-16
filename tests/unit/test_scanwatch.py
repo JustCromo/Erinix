@@ -352,3 +352,50 @@ def test_agent_shows_a_scan_as_an_incident_and_lists_the_source(tmp_path):
     assert agent.alerts >= 1 and build_incidents(store)
     assert any(r["name"] == "Port scans" and r["state"] == "ok" for r in agent.sources())
     agent.close()
+
+
+# ------------------------------------------------------------ the same address scanning again
+def test_a_new_scan_after_a_pause_is_reported_again():
+    det = ScanDetector()
+    first = knock(det, "203.0.113.50", range(1, 200), step=0.01)
+    assert [f.kind for f in first] == ["fast", "wide"]
+    assert knock(det, "203.0.113.50", range(1, 200), start=30.0, step=0.01) == []         # 30 s later: still the same scan
+    again = knock(det, "203.0.113.50", range(1, 200), start=120.0, step=0.01)             # same ports, two minutes later
+    assert [f.kind for f in again] == ["fast", "wide"]
+
+
+def test_a_pause_forgets_ports_but_not_other_sources():
+    det = ScanDetector()
+    knock(det, "203.0.113.50", range(1, 8), step=0.1)
+    knock(det, "203.0.113.51", range(1, 8), step=0.1)
+    assert knock(det, "203.0.113.50", range(8, 12), start=500.0, step=0.1) == []          # 7 old + 4 new would be 11: the old ones are gone
+    assert len(det._seen["203.0.113.50"]) == 4 and len(det._seen["203.0.113.51"]) == 7
+
+
+def test_repeat_window_is_per_rule_and_the_scan_rules_repeat_after_a_minute(tmp_path):
+    rules = load_rules(default_rules_path())
+    assert {i.id: i.repeat_after for i in rules.indicators if i.id.startswith("port-scan")} == {"port-scan": 60, "port-scan-wide": 60}
+    assert all(i.repeat_after == 300 for i in rules.indicators if not i.id.startswith("port-scan"))
+    rec = Recorder(Store(tmp_path / "e.db"), Correlator(rules))
+    S = 10**9
+
+    def scan_event(t):
+        info = ScanInfo.build(remote_addr="203.0.113.50", kind="fast", port_count=12, ports=(22, 80))
+        return Event(EventType.SCAN_DETECTED, Source.MINIMAL, payload=info, mono_ns=int(t * S))
+    assert len(rec.feed(scan_event(0))) == 1
+    assert rec.feed(scan_event(30)) == []                  # inside the rule's own window: counted, not repeated
+    assert len(rec.feed(scan_event(70))) == 1              # a minute later: a new alert
+
+
+@pytest.mark.parametrize("value", ["0", "9", "86401", "-5", "true", '"60"', "1.5"])
+def test_bad_repeat_after_is_refused(tmp_path, value):
+    (tmp_path / "bad.toml").write_text(f'''schema = 1
+[[indicator]]
+id = "x"
+event = "scan.detected"
+severity = "low"
+repeat_after = {value}
+[indicator.match]
+kind = ["fast"]
+''')
+    assert load_rules(tmp_path).problems

@@ -262,7 +262,7 @@ class Correlator:
         if who is not None:
             ident = (ind.id, who)
             last = self._seen_indicators.get(ident)
-            if last is not None and event.mono_ns - last < INDICATOR_DEDUP_NS:
+            if last is not None and event.mono_ns - last < ind.repeat_after * NS:
                 self._seen_indicators.move_to_end(ident)
                 self.stats.suppressed_duplicates += 1        # counted, never silent
                 return None

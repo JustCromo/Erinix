@@ -33,6 +33,7 @@ FLAG_MASK = 0x3F
 FAST_PORTS, FAST_SECONDS = 10, 10.0
 SLOW_PORTS, SLOW_SECONDS = 25, 300.0
 WIDE_PORTS = 100
+EPISODE_GAP = 60.0            # a source quiet for this long and then knocking again is a NEW scan
 MAX_SOURCES = 2048
 MAX_PORTS_PER_SOURCE = 512
 MAX_PENDING = 256
@@ -90,6 +91,7 @@ class ScanDetector:
     def __init__(self, *, ignore: frozenset[str] = frozenset(), clock: Callable[[], float] = time.monotonic) -> None:
         self.ignore, self.clock = ignore, clock
         self._seen: OrderedDict[str, dict[int, float]] = OrderedDict()     # source -> port -> last time
+        self._last: dict[str, float] = {}                                   # source -> time of its last packet
         self._level: dict[str, int] = {}                                    # source -> 0 quiet, 1 said fast/slow, 2 said wide
         self.dropped = 0
 
@@ -102,9 +104,14 @@ class ScanDetector:
             if len(self._seen) >= MAX_SOURCES:                              # forged sources cannot grow memory: the oldest goes
                 old, _ = self._seen.popitem(last=False)
                 self._level.pop(old, None)
+                self._last.pop(old, None)
                 self.dropped += 1
             ports = self._seen[src] = {}
         self._seen.move_to_end(src)
+        if now - self._last.get(src, now) > EPISODE_GAP:                    # a pause, then knocking again: a new scan
+            ports.clear()
+            self._level.pop(src, None)
+        self._last[src] = now
         known = port in ports
         if not known and len(ports) >= MAX_PORTS_PER_SOURCE:                # already far past every threshold
             oldest = min(ports, key=ports.__getitem__)
@@ -134,6 +141,7 @@ class ScanDetector:
         for src in [s for s, p in self._seen.items() if p and now - max(p.values()) > SLOW_SECONDS]:
             self._seen.pop(src, None)
             self._level.pop(src, None)
+            self._last.pop(src, None)
 
 
 class ScanWatcher:

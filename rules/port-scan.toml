@@ -16,6 +16,7 @@ description = "One remote address sent connection attempts to many different por
 mitre = ["T1046"]
 event = "scan.detected"
 severity = "medium"
+repeat_after = 60
 response = "interactive"
 [indicator.match]
 kind = ["fast", "slow"]
@@ -35,6 +36,7 @@ description = "One remote address sent connection attempts to a hundred or more 
 mitre = ["T1046"]
 event = "scan.detected"
 severity = "high"
+repeat_after = 60
 response = "interactive"
 [indicator.match]
 kind = ["wide"]
