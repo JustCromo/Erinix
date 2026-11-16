@@ -28,6 +28,12 @@ no root needed. Remove it with `erinix uninstall-app`.
 
 Requires Python 3.11 or newer. There are no runtime dependencies.
 
+Works on any Linux with `/proc` and Python 3.11+: for example Debian 12 and newer, Ubuntu 24.04 and newer,
+Fedora, Arch and Raspberry Pi OS (Bookworm). Older systems (Ubuntu 22.04 has Python 3.10) need a newer Python
+first. The rules are only accepted when nobody else can change them: a rules folder writable by a group
+that other people belong to, or by everyone, is refused. A group that only you belong to (the default on
+Ubuntu, Debian and Fedora) is fine. Blocking addresses needs `nftables`; everything else works without it.
+
 ## Try it
 
 ```bash

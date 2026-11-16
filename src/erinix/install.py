@@ -103,6 +103,15 @@ def desktop_entry(launcher: str, terminal: str | None) -> bytes:
             f"[Desktop Action Dashboard]\nName=Open the dashboard\nExec={launcher} ui\n").encode()
 
 
+def path_fix(shell: str) -> str:
+    """The exact command that puts ~/.local/bin in the PATH for the user's shell."""
+    name = os.path.basename(shell or "")
+    if name == "fish":
+        return "fish_add_path ~/.local/bin"
+    profile = {"bash": "~/.bashrc", "zsh": "~/.zshrc"}.get(name, "~/.profile")
+    return f"echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> {profile}"
+
+
 def install_app(home: Path, *, python: str, terminal: str | None = None, force: bool = False,
                 env: Mapping[str, str] | None = None, which: Callable[[str], str | None] = shutil.which,
                 run: Callable[..., object] = subprocess.run) -> InstallResult:
@@ -132,11 +141,15 @@ def install_app(home: Path, *, python: str, terminal: str | None = None, force: 
                 run(command, check=False, timeout=15, capture_output=True)
             except (OSError, subprocess.SubprocessError):
                 pass
-    if not chosen:
+    desktop = any(env.get(k) for k in ("DISPLAY", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP"))
+    if not chosen and desktop:
         result.notes.append("No known terminal was found: the menu entry will ask your desktop to open one.")
+    if not desktop:
+        result.notes.append("No desktop session found (a server?): just type 'erinix' in a terminal. The menu entry is not needed.")
     path_dirs = [p for p in env.get("PATH", "").split(os.pathsep) if p]
     if str(launcher.parent) not in path_dirs:
-        result.notes.append(f"{launcher.parent} is not in your PATH: add it to your shell profile to type 'erinix' anywhere.")
+        result.notes.append(f"{launcher.parent} is not in your PATH. To type 'erinix' anywhere, run this once and open a new terminal: "
+                            f"{path_fix(env.get('SHELL', ''))}")
     return result
 
 

@@ -14,7 +14,9 @@ Security principles (see docs/PLANNING.md):
 
 from __future__ import annotations
 
+import grp
 import os
+import pwd
 import stat
 import tomllib
 from dataclasses import dataclass
@@ -390,9 +392,24 @@ def _parse_indicator(raw: dict) -> Indicator:
 
 
 # ------------------------------------------------------- file security
+def _group_is_private(gid: int, owner: int) -> bool:
+    """True when only the owner can ever be in this group: it is the owner's own primary group, nobody else is a
+    member of it and no other account has it as primary group (the default on Ubuntu, Debian, Fedora, Raspberry Pi OS)."""
+    try:
+        me = pwd.getpwuid(owner)
+        group = grp.getgrgid(gid)
+        if me.pw_gid != gid or any(name != me.pw_name for name in group.gr_mem):
+            return False
+        return not any(p.pw_gid == gid and p.pw_uid != owner for p in pwd.getpwall())
+    except (KeyError, OSError):
+        return False
+
+
 def _check_stat(st: os.stat_result, what: str) -> None:
-    if st.st_mode & 0o022:
-        raise RuleError(f"{what} is writable by group or others: rejected (fix: chmod -R go-w on the rules folder; some systems, like Ubuntu, create group-writable folders by default)")
+    if st.st_mode & 0o002:
+        raise RuleError(f"{what} is writable by everyone: rejected (fix: chmod -R go-w on the rules folder)")
+    if st.st_mode & 0o020 and not _group_is_private(st.st_gid, st.st_uid):
+        raise RuleError(f"{what} is writable by a group other people belong to: rejected (fix: chmod -R go-w on the rules folder)")
     if st.st_uid not in (0, os.geteuid()):
         raise RuleError(f"{what} has an untrusted owner (uid {st.st_uid}): rejected")
 

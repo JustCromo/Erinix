@@ -16,7 +16,7 @@ def fake_which(*present):
 def run_install(home, **kw):
     calls = []
     kw.setdefault("which", fake_which("kitty", "update-desktop-database"))
-    kw.setdefault("env", {"PATH": f"{home}/.local/bin:/usr/bin"})
+    kw.setdefault("env", {"PATH": f"{home}/.local/bin:/usr/bin", "DISPLAY": ":0"})
     result = install_app(home, python=PY, run=lambda *a, **k: calls.append(a[0]), **kw)
     return result, calls
 
@@ -53,7 +53,7 @@ def test_terminal_choice(tmp_path):
         run_install(tmp_path, terminal="konsole", which=fake_which("kitty"))
     with pytest.raises(InstallError, match="unknown terminal"):
         run_install(tmp_path, terminal="evilterm; rm -rf ~")
-    result, _ = run_install(tmp_path, which=fake_which(), env={"PATH": ""})
+    result, _ = run_install(tmp_path, which=fake_which(), env={"PATH": "", "DISPLAY": ":0"})
     assert result.terminal is None and "Terminal=true" in (tmp_path / ".local/share/applications/erinix.desktop").read_text()
     assert any("default" in n or "No known terminal" in n for n in result.notes)
 
@@ -111,3 +111,20 @@ def test_update_tools_failures_do_not_break_install(tmp_path):
 
     result = install_app(tmp_path, python=PY, which=fake_which("kitty", "update-desktop-database"), env={"PATH": ""}, run=boom)
     assert len(result.written) == 4
+
+
+def test_path_fix_gives_the_exact_command_for_each_shell():
+    from erinix.install import path_fix
+    assert path_fix("/usr/bin/fish") == "fish_add_path ~/.local/bin"
+    assert path_fix("/bin/bash").endswith(">> ~/.bashrc") and path_fix("/usr/bin/zsh").endswith(">> ~/.zshrc")
+    assert path_fix("").endswith(">> ~/.profile") and path_fix("/bin/weird").endswith(">> ~/.profile")
+    assert "$HOME/.local/bin" in path_fix("/bin/bash")
+
+
+def test_a_server_gets_no_terminal_warning_and_a_desktop_does(tmp_path):
+    from erinix.install import install_app
+    server = install_app(tmp_path / "a", python="/usr/bin/python3", env={"PATH": "/usr/bin", "SHELL": "/bin/bash"}, which=lambda c: None)
+    assert any("No desktop session" in n for n in server.notes) and not any("No known terminal" in n for n in server.notes)
+    assert any("echo 'export PATH" in n for n in server.notes)
+    desk = install_app(tmp_path / "b", python="/usr/bin/python3", env={"PATH": "/usr/bin", "DISPLAY": ":0"}, which=lambda c: None)
+    assert any("No known terminal" in n for n in desk.notes) and not any("No desktop session" in n for n in desk.notes)

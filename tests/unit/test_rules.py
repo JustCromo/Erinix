@@ -224,10 +224,9 @@ def test_cli_output_is_sanitized(tmp_path, capsys):
     assert "\x1b" not in out and "evil" in out
 
 
-def test_group_writable_rules_explain_how_to_fix_them(tmp_path):
-    import os
-
-    from erinix.rules import RuleError, load_rules
+def test_group_writable_rules_explain_how_to_fix_them(tmp_path, monkeypatch):
+    from erinix.rules import RuleError, load_rules, loader
+    monkeypatch.setattr(loader, "_group_is_private", lambda gid, owner: False)
     rules = tmp_path / "rules"
     rules.mkdir()
     os.chmod(rules, 0o775)
@@ -238,13 +237,63 @@ def test_group_writable_rules_explain_how_to_fix_them(tmp_path):
     assert load_rules(rules).problems == ()
 
 
-def test_group_writable_rules_explain_how_to_fix_them(tmp_path):
-    from erinix.rules import RuleError, load_rules
-    rules = tmp_path / "rules"
-    rules.mkdir()
-    os.chmod(rules, 0o775)
-    with pytest.raises(RuleError) as err:
-        load_rules(rules)
-    assert "chmod -R go-w" in str(err.value)
-    os.chmod(rules, 0o755)
-    assert load_rules(rules).problems == ()
+# ---------------------------------------------------------------- private group (Ubuntu, Debian, Fedora: umask 002)
+class _Pw:
+    def __init__(self, name, uid, gid):
+        self.pw_name, self.pw_uid, self.pw_gid = name, uid, gid
+
+
+class _Gr:
+    def __init__(self, members):
+        self.gr_mem = members
+
+
+def _world(monkeypatch, *, accounts, members, gid=1000, owner=1000):
+    from erinix.rules import loader
+    monkeypatch.setattr(loader.pwd, "getpwuid", lambda uid: next(a for a in accounts if a.pw_uid == uid))
+    monkeypatch.setattr(loader.pwd, "getpwall", lambda: accounts)
+    monkeypatch.setattr(loader.grp, "getgrgid", lambda g: _Gr(members))
+    return loader._group_is_private(gid, owner)
+
+
+def test_own_private_group_is_accepted(monkeypatch):
+    assert _world(monkeypatch, accounts=[_Pw("ivan", 1000, 1000), _Pw("root", 0, 0)], members=[])
+    assert _world(monkeypatch, accounts=[_Pw("ivan", 1000, 1000)], members=["ivan"])
+
+
+def test_a_group_with_other_members_is_refused(monkeypatch):
+    assert not _world(monkeypatch, accounts=[_Pw("ivan", 1000, 1000)], members=["ivan", "guest"])
+
+
+def test_a_group_that_is_another_accounts_primary_group_is_refused(monkeypatch):
+    assert not _world(monkeypatch, accounts=[_Pw("ivan", 1000, 1000), _Pw("guest", 1001, 1000)], members=[])
+
+
+def test_a_group_that_is_not_the_owners_own_is_refused(monkeypatch):
+    assert not _world(monkeypatch, accounts=[_Pw("ivan", 1000, 1000)], members=[], gid=27)   # for example the sudo group
+
+
+def test_unknown_owner_or_group_is_refused(monkeypatch):
+    from erinix.rules import loader
+
+    def missing(_):
+        raise KeyError("x")
+    monkeypatch.setattr(loader.pwd, "getpwuid", missing)
+    assert loader._group_is_private(1000, 1000) is False
+
+
+def _stat(mode, uid=None, gid=None):
+    return os.stat_result((mode, 1, 1, 1, os.geteuid() if uid is None else uid, os.getegid() if gid is None else gid, 0, 0, 0, 0))
+
+
+def test_check_stat_rules(monkeypatch):
+    from erinix.rules import RuleError, loader
+    monkeypatch.setattr(loader, "_group_is_private", lambda gid, owner: True)
+    loader._check_stat(_stat(0o40775), "x")                                 # group-writable, private group: fine
+    for mode in (0o40777, 0o40757, 0o100666):                               # writable by everyone: never
+        with pytest.raises(RuleError):
+            loader._check_stat(_stat(mode), "x")
+    monkeypatch.setattr(loader, "_group_is_private", lambda gid, owner: False)
+    with pytest.raises(RuleError):
+        loader._check_stat(_stat(0o40775), "x")                             # shared group: refused
+    loader._check_stat(_stat(0o40755), "x")
